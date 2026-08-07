@@ -1,2 +1,9 @@
-# voice-agent-postop
-Agente de voz en español para seguimiento postoperatorio: conversación en tiempo real, RAG clínico con trazabilidad y conocimiento actualizable en caliente, y escalamiento a personal humano bajo asimetría clínica. Tech Sphere Challenge 2026.
+# Voice Agent Post-Op — Tech Sphere Challenge 2026
+
+Agente de voz en español para seguimiento postoperatorio. En construcción.
+
+## Estado
+Fase 1: diseño de la política de decisión clínica.
+
+## Setup
+_Pendiente. Objetivo: levantable en ≤15 min siguiendo solo este README._

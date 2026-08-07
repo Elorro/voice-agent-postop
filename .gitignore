@@ -216,3 +216,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Secrets
+.env
+.env.local
+*.key
+
+# Datos del reto (NO redistribuir el corpus PDF con derechos de terceros)
+dataset/textos/
+
+# Artefactos pesados (decidir en fase posterior si van versionados o restaurados)
+*.sqlite3
+chroma_db/
