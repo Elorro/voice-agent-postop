@@ -584,7 +584,7 @@ matriz, no se impone** por decreto.
 | Compuerta `g_dolor` | ≥ 5 | `[INFERENCIA]` **primer entero por encima de `verde_max` tardío = 4** — selección sobre el dev set, declarada | 0/58 verdes tardíos · A7 / A9 |
 | Compuerta `g_constitucional` | conjunción | `[INFERENCIA]` **forma mínima con cero verdes entre las combinaciones de las dos señales**: cada parte por separado deja 5 y 4 verdes, disjuntos (D1) — selección sobre el dev set, declarada | 0/58 verdes tardíos · A8 / A2 |
 | Señal blanda fiebre | ≥ 37.5 °C | `[INFERENCIA]` febrícula, sin «sostenida» (H1) | §6 H1 |
-| Señal blanda dolor | ≥ 5 (cond. en temprano) | `[INFERENCIA]` reformulación no autorreferencial (H3) | §6 H3 |
+| Señal blanda dolor | ≥ 5 (cond. en temprano) | `[INFERENCIA]` H3 reformuló el **predicado** (no autorreferencial); el **valor** es el mismo de `g_dolor` y sale del mismo hecho: primer entero por encima de `verde_max` tardío = 4 — selección sobre el dev set, declarada | 0/58 verdes tardíos con dolor ≥ 5; en temprano se condiciona porque ahí hay 6 verdes con ≥ 5 · §6 H3 / A7 |
 | Umbral de conteo TARDÍO | ≥ 1 | `[INFERENCIA]` **mínimo posible del conteo**; se adopta porque en tardío la señal blanda aislada ya discrimina y el error que compra es c₂, la celda más barata — selección sobre el dev set, declarada | 7/58 verdes tardíos con ≥1 señal; captura 10/10 amarillos tardíos · §5.2 |
 | Umbral de conteo TEMPRANO | ≥ 2 | `[INFERENCIA]` **regla nueva, no existía en los `.docx`**; ≥2 se elige por comparación de costo contra ≥1 sobre la muestra — selección sobre el dev set, declarada | 4 c₂ con ≥2 vs 23 c₂ con ≥1, ambos con c₁ = 0 y los 15 amarillos tempranos capturados · §5.2 / H4 |
 | Tope por señal | 2 | `[ESPECULACIÓN]` pendiente Fase 3 | §7.2 |
@@ -614,29 +614,35 @@ transferibilidad:**
 | Familia | Parámetros | Riesgo de sobreajuste al dev set |
 |---|---|---|
 | **Ancla externa al dataset** — el valor viene de una definición clínica o de una escala estándar, fijada antes de mirar los datos; la muestra solo lo confirma | `fiebre_franca ≥ 38.0`, `dolor_severo ≥ 7`, corte del enrutador en día 4 | **Bajo.** Un contraejemplo en la muestra refutaría el parámetro, pero su ausencia no es lo que lo sostiene |
-| **Selección sobre el dev set** — el valor se eligió barriendo la muestra hasta encontrar el punto que optimiza un criterio | `g_fiebre ≥ 37.8`, `g_dolor ≥ 5`, `g_constitucional`, conteo TARDÍO ≥ 1, conteo TEMPRANO ≥ 2 | **Alto.** El valor **es** el resultado del barrido: no hay evidencia independiente de la que lo produjo |
+| **Selección sobre el dev set** — el valor se eligió barriendo la muestra hasta encontrar el punto que optimiza un criterio | `g_fiebre ≥ 37.8`, `g_dolor ≥ 5`, `g_constitucional`, señal blanda `dolor ≥ 5`, conteo TARDÍO ≥ 1, conteo TEMPRANO ≥ 2 | **Alto.** El valor **es** el resultado del barrido: no hay evidencia independiente de la que lo produjo |
 
-Esta es la única distinción de la tabla que sobrevive al cambio de muestra. Tres filas no llevan familia, por
-dos razones distintas:
+Esta es la única distinción de la tabla que sobrevive al cambio de muestra. **De las filas etiquetadas
+`[INFERENCIA]`, dos no llevan familia** (las `[ESPECULACIÓN]` y la fila de anclas RAG quedan fuera de esta
+taxonomía por construcción: no hay valor fijado que clasificar). Las dos son:
 
 - **`Purulenta / incapacitante`** es decisión de diseño pura: no tiene valor numérico que ajustar, y su
   justificación es de defendibilidad ante el jurado, no de cobertura medida.
-- **Las dos señales blandas (`fiebre ≥ 37.5`, `dolor ≥ 5`)** sí tienen umbral, pero **lo heredan de los
-  `.docx` originales sin haber sido reexaminado en esta auditoría**. H1 y H3 corrigieron su *predicado*
-  —quitar «sostenida», romper la autorreferencia— **no su valor**. `[ESPECULACIÓN]` declarada: es plausible
-  que 37.5 sea ancla externa (febrícula convencional) y que ≥ 5 sea selección sobre el dev set (es el mismo
-  `verde_max` tardío + 1 que fija `g_dolor`), pero ninguna de las dos se verificó. **Deuda menor, abierta:**
-  clasificar ambos umbrales antes de cerrar Fase 2.
+- **`Señal blanda fiebre ≥ 37.5`** sí tiene umbral, pero **lo hereda de los `.docx` originales sin haber
+  sido reexaminado en esta auditoría**: H1 corrigió su *predicado* —quitar «sostenida»— **no su valor**.
+  `[ESPECULACIÓN]` declarada: es plausible que 37.5 sea ancla externa (febrícula convencional), pero no se
+  verificó. **Deuda menor, abierta:** clasificarlo antes de cerrar Fase 2.
+
+`[INFERENCIA]` **`dolor ≥ 5` aparece dos veces con el mismo valor y el mismo origen** — como `g_dolor`
+(compuerta) y como señal blanda tardía. Ambas filas se clasifican igual: *selección sobre el dev set*,
+`verde_max` tardío + 1. Se dejan como dos filas porque son dos parámetros con semántica distinta (una
+prohíbe cerrar en verde, la otra cuenta para el agregado) y podrían divergir si el corpus fija uno de los
+dos. **Deuda abierta (fase RAG):** al resolver el anclaje, ambas convergen o se justifica por qué difieren.
+Hoy **no deben editarse por separado**: cambiar una sin la otra es un bug silencioso.
 
 **Marcadores literales en la columna «Origen»** (para que un `grep` sobre esta tabla no se equivoque):
 `ancla externa al dataset` y `selección sobre el dev set, declarada`. Son mutuamente excluyentes y ninguna
 fila lleva las dos. Las negaciones se redactan como «el valor no se barrió sobre la muestra» y **nunca**
 negando el marcador positivo, para que buscar la cadena `selección sobre el dev set, declarada` devuelva
-exactamente las cinco filas ajustadas a la muestra y ninguna más.
+exactamente las seis filas ajustadas a la muestra y ninguna más.
 
-`[INFERENCIA]` **Consecuencia de honestidad, no cosmética.** Los **cinco** parámetros marcados «selección
+`[INFERENCIA]` **Consecuencia de honestidad, no cosmética.** Los **seis** parámetros marcados «selección
 sobre el dev set, declarada» comparten un riesgo que la etiqueta `[HECHO]` ocultaba: **están ajustados a los
-160 casos**. Para los cuatro de régimen tardío, su cero-verdes no es una garantía transferible: es la
+160 casos**. Para los cinco de régimen tardío, su cero-verdes no es una garantía transferible: es la
 ausencia de contraejemplo en una muestra de 58 verdes tardíos con **n efectivo de 34 pacientes** (los 58
 casos son 34 pacientes distintos; 39 es el conteo de pacientes verdes en toda la muestra, no en régimen
 tardío). Para el conteo TEMPRANO, la base es 65 verdes tempranos y el criterio no es cero-verdes sino

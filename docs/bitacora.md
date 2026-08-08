@@ -263,11 +263,20 @@ encontró **seis defectos**, uno de ellos en un parámetro que nunca se había e
 
 - **[BLOQUEANTE · antes de la sesión de evaluación] Anclaje al corpus de las CUATRO banderas y del corte
   temporal.** *(Elevada de «diferida a fase RAG» y ampliada — antes cubría solo la bandera de dolor.)*
-  Localizar en los 107 PDFs: (a) partición de severidad NRS 7–10; (b) umbral febril postquirúrgico de
-  38.0 °C; (c) criterios de ISQ para secreción purulenta; (d) deterioro funcional agudo para movilidad
-  incapacitante nueva; (e) ventana de presentación de la ISQ que sostiene el corte en día 4. Citarlas en el
-  registro de escalamiento (`citas_RAG`, hoy vacío para las cuatro). Riesgo: si el corpus no sustenta (a),
-  la cobertura defendible del Nivel 1 cae a 11/12.
+  Localizar en los 107 PDFs, **en este orden de prioridad**:
+  1. **(e) Ventana de presentación de la ISQ superficial (desde el día 4)** — sostiene el corte del
+     enrutador. **Primera búsqueda**: es la única de las tres anclas externas sin fuente verificada, y si
+     el corpus no la sustenta el corte del enrutador queda sin respaldo. Ver la deuda «Confianza desigual
+     entre las tres anclas externas» al final de esta sección.
+  2. (a) Partición de severidad NRS 7–10 — bandera `dolor ≥ 7`. Convención clínica establecida; se espera
+     que el corpus la confirme.
+  3. (b) Umbral febril postquirúrgico de 38.0 °C — bandera `fiebre_franca`. Ídem.
+  4. (c) Criterios de ISQ para secreción purulenta, y (d) deterioro funcional agudo para movilidad
+     incapacitante nueva. Menor urgencia: D2 mostró que ninguna de las dos aporta cobertura que la fiebre
+     no dé ya, así que su cita sirve a la defendibilidad, no al recall.
+
+  Citarlas en el registro de escalamiento (`citas_RAG`, hoy vacío para las cuatro). Riesgo: si el corpus no
+  sustenta (a), la cobertura defendible del Nivel 1 cae a 11/12.
 - **[Fase 3] Calibración de los topes de indagación.** Los valores fijados (2 por señal, 6 global) son
   `[ESPECULACIÓN]` dentro de los rangos declarados 2–3 y 6–8. Calibrar en prototipo midiendo sobre capa 2
   (no capa 1).
@@ -283,10 +292,26 @@ encontró **seis defectos**, uno de ellos en un parámetro que nunca se había e
 - **[Protocolo] Reemitir el IC a nivel paciente.** Todo recall reportado usa Wilson sobre **n=6 pacientes**
   ([0.610, 1.000]), no sobre n=12 casos. La unidad de remuestreo de cualquier bootstrap es el paciente. La
   cifra «un error mueve el recall ~8 pt» que aparece en los .docx es **~17 pt**.
-- **[Fase 2 · menor] Clasificar el origen de los dos umbrales de señal blanda.** `fiebre ≥ 37.5` y
-  `dolor ≥ 5` (`parametros_politica.md` §5.1) **heredan su valor de los .docx sin reexaminar**: H1 y H3
-  corrigieron su predicado, no su umbral. Falta determinar si son ancla externa o selección sobre el dev
-  set — es la única casilla de la tabla de trazabilidad §10 que queda sin familia teniendo valor numérico.
+- **[Fase 2 · menor] Clasificar el origen de `fiebre ≥ 37.5` (señal blanda).** El umbral
+  (`parametros_politica.md` §5.1) **hereda su valor de los .docx sin reexaminar**: H1 corrigió su predicado
+  —quitar «sostenida»— no su valor. Falta determinar si es ancla externa (febrícula convencional) o
+  selección sobre el dev set. *(La otra mitad de esta deuda, `dolor ≥ 5`, ya está clasificada: es selección
+  sobre el dev set, mismo número y mismo hecho que `g_dolor`. Lo que queda de ella es hacer converger las
+  dos filas — ver «Convergencia de `dolor ≥ 5`» al final de esta sección.)*
 - **[Protocolo] Añadir el par de colisión a la batería de casos-frontera.** `…00012_7` (amarillo) vs
   `…00017_7` (rojo), ambos con fiebre 37.9 y eritema al día 7. Es el test de que la política discrimina por
   vector y no por termómetro (D5).
+- **[Fase RAG] Convergencia de `dolor ≥ 5`.** El valor aparece **dos veces** en
+  `parametros_politica.md` §10: como `g_dolor` (compuerta de Nivel 1.5) y como señal blanda
+  tardía (Nivel 2). *Se registró originalmente como «dos procedencias distintas»; al alinear se
+  verificó que es una sola*: ambas filas son **selección sobre el dev set**, primer entero por
+  encima de `verde_max` tardío = 4. Mismo número, mismo hecho, semántica distinta (una prohíbe
+  cerrar en verde, la otra cuenta para el agregado). Al resolver el anclaje al corpus, ambas
+  filas deben converger o justificar por qué difieren. **Mientras tanto no se editan por
+  separado: cambiar una sin la otra es un bug silencioso.**
+- **[Fase RAG] Confianza desigual entre las tres anclas externas.** `[INFERENCIA]` El umbral
+  febril de 38.0 °C y la partición NRS 7–10 son convenciones clínicas establecidas. La ventana
+  de presentación de la ISQ superficial desde el día 4 —que es lo que fija el corte del
+  enrutador— es una inferencia del arquitecto, **sin verificar contra fuente alguna**. Si el
+  corpus confirma las dos primeras y no la tercera, el parámetro que queda sin sustento es el
+  corte del enrutador. **Es lo primero que hay que buscar en los 107 PDFs.**
