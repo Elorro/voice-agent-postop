@@ -1,0 +1,133 @@
+# voice-agent-postop — un servicio, un proceso, un worker.
+#
+# Uso normal (ver README.md):
+#   docker compose pull && docker compose up -d
+#
+# Requiere Compose v2 (el plugin `docker compose`, no el binario
+# `docker-compose` v1, que no entiende este archivo).
+
+name: voice-agent-postop
+
+services:
+  agente:
+    image: ghcr.io/elorro/voice-agent-postop:v0.1.0
+    # Alternativa documentada a `pull`, para quien no pueda alcanzar ghcr.io:
+    #   docker compose build
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voice-agent-postop
+    restart: unless-stopped
+
+    # `required: false` a propósito: sin .env el contenedor arranca igual y
+    # /salud dice exactamente qué falta. Abortar aquí dejaría al operador con
+    # un error de compose y ninguna pista.
+    env_file:
+      - path: .env
+        required: false
+
+    environment:
+      # Rutas DENTRO del contenedor. Fijadas aquí, no en .env: tienen que
+      # coincidir con los destinos de los montajes de abajo. Lo que el operador
+      # reubica desde .env es el ORIGEN en el host, no el destino.
+      DIR_APP: /app
+      PUERTO: 8080
+      DIRECCION_BIND: 0.0.0.0
+      DATASET_DIR: ./dataset
+      INDICE_DIR: ./datos/indice
+      SUBIDOS_DIR: ./datos/subidos
+      LOGS_DIR: ./datos/logs
+      INDICE_SEMILLA_DIR: /opt/indice_base
+
+    ports:
+      # PUERTO del .env es el puerto del HOST. Dentro, el proceso escucha
+      # siempre en 8080.
+      - "${PUERTO:-8080}:8080"
+
+    volumes:
+      # --- Solo lectura: entran por git, no por la imagen ---------------------
+      # Si el directorio no existe en el host, Docker lo crea vacío y el
+      # servicio arranca igual. Es el caso de hoy con indice_base/.
+      #
+      # El sufijo `z` es obligatorio, no decorativo: en Fedora, RHEL, CentOS y
+      # derivados —SELinux en modo enforcing— el contenedor recibe EACCES al
+      # leer un bind mount sin reetiquetar, aunque corra como root y los
+      # permisos POSIX sean correctos. Verificado: sin `z`, /salud reporta
+      # "montado pero ilegible: Permission denied". En macOS y Windows no hay
+      # SELinux y el runtime ignora el sufijo, así que es portable.
+      - "${DATASET_DIR:-./dataset}:/app/dataset:ro,z"
+      - "${INDICE_BASE_DIR:-./indice_base}:/opt/indice_base:ro,z"
+
+      # --- Lectura/escritura: VOLÚMENES NOMBRADOS -----------------------------
+      # El índice NO puede ir a un bind mount. ChromaDB persiste en SQLite, y
+      # SQLite sobre bind mount de Docker Desktop (macOS/Windows) atraviesa una
+      # capa de compartición cuya semántica de bloqueo no reproduce la de POSIX:
+      # el resultado es corrupción del índice o un cuelgue. Un volumen nombrado
+      # vive en el filesystem nativo de la VM y no atraviesa esa capa.
+      - datos_indice:/app/datos/indice
+      - datos_subidos:/app/datos/subidos
+
+      # --- Lectura/escritura: BIND a propósito --------------------------------
+      # Los logs sí van a bind mount: son append a texto plano, sin bloqueos, y
+      # el jurado tiene que poder abrirlos con su editor sin `docker cp`.
+      # `z` por la misma razón que arriba, y aquí es peor: sin él el servicio
+      # arranca, responde y no escribe una sola línea al disco del jurado.
+      - "${LOGS_HOST_DIR:-./datos/logs}:/app/datos/logs:z"
+
+    # Mide "el proceso responde", no "el sistema está listo": este healthcheck
+    # solo ve el código HTTP, y /salud responde 200 siempre. El veredicto
+    # LISTO / NO LISTO está en el cuerpo de la página. Son dos cosas distintas
+    # a propósito, y el README lo dice así.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/salud',timeout=8).status==200 else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # El arranque precarga el embedder (~90 MB ONNX) y la voz (~63 MB) desde
+      # disco. Sin este margen, Docker marcaría "unhealthy" un contenedor que
+      # solo está terminando de cargar.
+      start_period: 45s
+
+  # ===========================================================================
+  # Perfil `local` — fallback del modelo de lenguaje. NO arranca por defecto.
+  # ===========================================================================
+  # `profiles` es lo que lo mantiene apagado: `docker compose up -d` a secas
+  # ignora este servicio por completo, así que la ruta principal no paga ni un
+  # byte por su existencia. Solo aparece con:
+  #
+  #     docker compose --profile local up -d
+  #     docker compose --profile local exec llm-local ollama pull llama3.2:3b
+  #
+  # y apuntando LLM_BASE_URL=http://llm-local:11434/v1 en .env (ver .env.example
+  # y docs/DECLARACION_MODELO.md).
+  #
+  # Sigue siendo «un servicio, un proceso, un worker» para el agente: esto es un
+  # proveedor de inferencia, el equivalente local de la API remota, y los dos
+  # son excluyentes — o se usa el perfil A, o se usa este.
+  #
+  # Ollama expone un endpoint OpenAI-compatible en /v1, el MISMO protocolo que
+  # el proveedor remoto. Por eso el fallback no necesita un segundo cliente:
+  # cambia el base_url y nada más.
+  llm-local:
+    image: ollama/ollama:latest
+    container_name: voice-agent-postop-llm
+    profiles: ["local"]
+    restart: unless-stopped
+    volumes:
+      # Los pesos del modelo se descargan una vez y sobreviven a `down`.
+      # `down -v` los borra y habría que volver a hacer `ollama pull`.
+      - modelos_llm_local:/root/.ollama
+    # Sin `ports`: solo lo consume `agente` por la red interna de compose. No
+    # hay razón para exponer un servidor de inferencia sin autenticación al
+    # host del jurado.
+    expose:
+      - "11434"
+
+volumes:
+  datos_indice:
+  datos_subidos:
+  modelos_llm_local:

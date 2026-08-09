@@ -16,7 +16,7 @@ Qué verifica:
         vector completo.
 
 Uso (desde la raíz del repo):
-    DATASET_DIR=/home/luis/Projects/ParticipantArtifacts/dataset python3 scripts/verificacion_hd1.py
+    DATASET_DIR=./dataset python3 scripts/verificacion_hd1.py
 
 Determinista, idempotente, sin red. Sale con código 1 si algún número esperado
 no se reproduce.

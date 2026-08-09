@@ -525,7 +525,7 @@ sin escribirse.
 
 ### 2026-08-09 · Sub-paso 2.1 — el módulo puro existe, y la spec cambió una vez al escribirlo
 
-**Estado: cerrado.** `politica/` implementado, 150 tests en verde, criterio de aceptación reproducido
+**Estado: cerrado.** `politica/` implementado, 143 tests en verde (142 pasan + 1 skip), criterio de aceptación reproducido
 exacto. Una corrección de política (O3, abajo) y dos erratas del contrato de 2.1.
 
 #### Qué se entregó
@@ -733,3 +733,176 @@ exacto. Una corrección de política (O3, abajo) y dos erratas del contrato de 2
   enrutador— es una inferencia del arquitecto, **sin verificar contra fuente alguna**. Si el
   corpus confirma las dos primeras y no la tercera, el parámetro que queda sin sustento es el
   corte del enrutador. **Es lo primero que hay que buscar en los 107 PDFs.**
+
+---
+
+### 2026-08-09 · Fase 3 sub-paso 3.0 — el esqueleto levanta, y el modelo permitido dejó de existir
+
+**Estado: esqueleto cerrado, con una corrección de fondo encima.** El contenedor arranca, carga sus
+modelos y se diagnostica solo en `/salud`. En mitad del cierre apareció que el LLM que el reto permite ya
+no lo sirve nadie, y eso reescribió parte del sub-paso.
+
+#### Topología del despliegue — decisiones y por qué
+
+- `[INFERENCIA]` **Un servicio, un proceso, un worker de uvicorn.** Dos workers serían dos procesos
+  escribiendo el mismo SQLite de ChromaDB sin coordinarse. La concurrencia que el reto necesita es de una
+  sesión de demostración, no de producción; pagar corrupción de índice por un throughput que nadie va a
+  medir es un mal cambio.
+- `[INFERENCIA]` **Imagen publicada en GHCR** (`ghcr.io/elorro/voice-agent-postop:v0.1.0`), con
+  `docker compose build` documentado como ruta alterna. La compuerta G2 se juega en el tiempo de
+  `clone` → `LISTO`; construir en la máquina del jurado baja los modelos y compila, y es minutos contra
+  segundos. El `build` queda porque ghcr.io puede estar bloqueado en una red corporativa, y ese modo de
+  falla no puede costar la evaluación.
+- `[INFERENCIA]` **La clave nunca entra al repositorio ni a la imagen.** Entra por `.env`, que está en
+  `.gitignore`, y `.dockerignore` la excluye del contexto de build. El repo es público: una clave
+  commiteada es una clave quemada, y el rollback no la desquema.
+- `[HECHO]` **El índice va a volumen nombrado, no a bind mount.** ChromaDB persiste sobre SQLite, y un
+  bind mount de Docker Desktop (macOS/Windows) atraviesa una capa de compartición cuya semántica de
+  bloqueo no reproduce la de POSIX, que es de lo que SQLite depende. El fallo no sería un error legible:
+  sería corrupción o cuelgue. Los **logs sí** van a bind, porque son append a texto plano sin bloqueos y
+  el jurado tiene que poder abrirlos con su editor sin `docker cp`.
+- `[HECHO]` **Sufijo `z` en todos los binds.** En Fedora/RHEL con SELinux en enforcing, sin él el
+  contenedor recibe `EACCES` aunque corra como root y los permisos POSIX estén bien; verificado en esta
+  máquina (`/salud` reportaba «montado pero ilegible: Permission denied»). macOS y Windows ignoran el
+  sufijo, así que es portable.
+- `[INFERENCIA]` **Matriz de tres SO en el README, con bloques autosuficientes** en vez de un bloque
+  genérico con notas. Mezclar comandos de dos sistemas es el error que un operador comete leyendo rápido.
+- `[INFERENCIA]` **`sudo` como camino principal en Linux**, no `usermod -aG docker`. Añadirse al grupo no
+  toma efecto hasta cerrar sesión y volver a entrar; ese paso es invisible y el fallo posterior
+  («permission denied … docker daemon socket») no lo sugiere. `sudo` funciona desde el primer minuto.
+
+#### El hallazgo: el LLM de la lista permitida ya no existe
+
+- `[HECHO]` Consulta a <https://console.groq.com/docs/deprecations> el **2026-08-09**:
+  `llama-3.1-70b-versatile` apagado el **24/01/2025**; `llama-3.3-70b-versatile` apagado el
+  **16/08/2026** — siete días después de la consulta. Consulta a
+  <https://ai.google.dev/gemini-api/docs/changelog> el mismo día: la familia **Gemini 1.5**
+  (`gemini-1.5-pro`, `gemini-1.5-flash`, `gemini-1.5-flash-8b`) está apagada desde el **29/09/2025**.
+- `[HECHO]` `llama-3.3-70b-versatile` era el **default** que el esqueleto traía en `.env.example` y en
+  `app/config.py`. O sea: el repositorio apuntaba, por defecto, a un modelo con siete días de vida.
+- `[HECHO]` **El STT no está afectado.** G3 restringe el modelo de **lenguaje**. `whisper-large-v3` no
+  aparece en la tabla de deprecaciones de Groq consultada el 2026-08-09.
+- `[INFERENCIA]` **Decisión A + C.** Ruta principal **A**: Llama 3.1 70B —el modelo exacto de la lista—
+  servido por un proveedor OpenAI-compatible que no es Groq, porque Groq lo retiró. Fallback **C**:
+  Llama 3.2 local (celda «Local, CPU» de la misma lista) sobre servidor OpenAI-compatible.
+  El argumento de cumplimiento es que la lista nombra el **modelo**; «vía Groq» está en la columna de
+  dónde corre, y el reto declara libre el resto del stack. Se conserva el modelo exigido **precisamente
+  porque** el proveedor sugerido lo retiró; quedarse en Groq obligaba a usar un modelo fuera de la lista,
+  que es el incumplimiento real.
+- `[INFERENCIA]` **A y C hablan el mismo protocolo, así que son una sola integración.** Cambia
+  `LLM_BASE_URL` y nada más. Si fueran dos clientes, el fallback sería una rama de código que nadie
+  ejercita hasta el día que hace falta, que es el peor día para estrenarla.
+- `[HECHO]` **El fallback local está empaquetado y probado, no solo documentado.** `compose.yaml` trae un
+  servicio `llm-local` con `profiles: ["local"]`, que `docker compose up -d` a secas ignora. Verificado el
+  2026-08-09: `docker compose --profile local up -d` + `ollama pull llama3.2:1b`, la sonda responde
+  `[OK] «llama3.2:1b» servido y alcanzable (33 ms) · perfil «local»`, y un `POST /v1/chat/completions`
+  desde el contenedor del agente devuelve `'OK.'`. Probado con `llama3.2:1b`; `3b` es el mismo camino de
+  código y **no se ejecutó**.
+- `[INFERENCIA]` **El documento `docs/DECLARACION_MODELO.md` existe para que el jurado no tenga que
+  reconstruir esto desde el código.** Tono informativo, sin reproche: el reto se escribió antes del
+  apagado del 16/08/2026. Es información nueva, no un error de quien redactó las bases.
+
+#### Consecuencia de diseño: LLM y STT dejan de ser el mismo bloque
+
+- `[INFERENCIA]` Las tres variables `GROQ_*` del LLM se sustituyen por `LLM_BASE_URL`, `LLM_API_KEY`,
+  `LLM_MODELO`, `LLM_PERFIL`; el STT conserva las suyas (`STT_*`). Que compartieran prefijo hizo pasar por
+  «un proveedor» lo que son dos decisiones independientes: mover el LLM habría arrastrado al STT sin
+  ninguna razón técnica.
+- `[INFERENCIA]` **Ningún default apunta a un proveedor ni a un modelo concreto.** El default es lo que se
+  copia sin leer, y un default apagado es exactamente el fallo que trajo este cambio. Con `LLM_MODELO`
+  vacío, `/salud` reporta FALLO y dice el identificador exacto que va en cada perfil.
+- `[INFERENCIA]` **`sondear_groq` se parte en `sondear_llm` y `sondear_stt`, y la del LLM comprueba que el
+  modelo EXISTE**, no solo que la clave sirve. El modo de falla que nos trajo aquí es «clave buena, modelo
+  inexistente»: el proveedor responde 200 a `/models`, la clave valida, y revienta en la primera
+  inferencia con `model_decommissioned` — delante del jurado. Verificado el 2026-08-09 contra el proveedor
+  real: con `llama-3.3-70b-versatile` la sonda responde
+  `[FALLO] el proveedor no sirve «llama-3.3-70b-versatile» (responde con 400 modelos)` y lista los
+  candidatos parecidos. **Esa sonda habría cazado este fallo antes de que existiera.**
+
+#### Empaquetado medido
+
+- `[HECHO]` **300,2 MB comprimida** (`docker save ghcr.io/elorro/voice-agent-postop:v0.1.0 | wc -c` →
+  `300221440`), 1,02 GB en disco (`docker images`). Presupuesto: 400 MB. Holgura ~100 MB.
+- `[HECHO]` Una medición anterior del mismo día daba **280,4 MB**, con `kubernetes` desinstalado. Al
+  revertir esa poda (abajo) el número vigente pasa a 300,2 MB. La diferencia medida es **19,8 MB**, no los
+  ~25 MB que se habían estimado: la estimación era del orden correcto y aun así estaba mal, y el que
+  describe la imagen entregada es el medido.
+- `[HECHO]` `docker compose build --no-cache` termina en verde; la verificación final de la imagen carga
+  embedder (384 dim) y voz (`es_MX-ald-medium`, 22050 Hz) sin red.
+
+#### Reversión: la poda de `kubernetes`
+
+- `[INFERENCIA]` Se había desinstalado `kubernetes` (dependencia declarada de `chromadb`, usada solo en su
+  modo servidor sobre clúster). **Revertido.** Asimetría de riesgo: 19,8 MB comprimidos sobre un
+  presupuesto donde ya sobraban ~120, contra un `ImportError` posible en cualquier ruta de `chromadb` que
+  la prueba de humo del build no ejercita. Una poda solo es segura hasta donde llega la prueba, y la
+  prueba cubría cliente, colección, embedder y consulta — no todo `chromadb`.
+- `[INFERENCIA]` Segundo motivo, independiente y quizá más fuerte: `requirements.txt` afirma ser un
+  `pip freeze` real y el build lo audita. Desinstalar **después** de auditar hacía que el archivo dejara
+  de describir la imagen entregada, que es justo lo que la auditoría existe para impedir. La poda de `pip`
+  y `setuptools` se conserva: la lista `IGNORAR` de la auditoría ya los excluye explícitamente.
+
+#### Error del ARQUITECTO, registrado
+
+- `[HECHO]` El criterio de aceptación del prompt anterior exigía **«150 tests»**. El repo tiene **143**
+  (`python3 -m pytest tests/ -q` → `142 passed, 1 skipped`), y ya los tenía antes de esa tarea: el número
+  no describía un objetivo, describía mal el presente.
+- `[INFERENCIA]` **Mecanismo:** la cifra salió del documento de contexto y se repitió como `[HECHO]` sin
+  verificarla contra el repo. Es el **mismo mecanismo ya registrado dos veces** en esta bitácora —afirmar
+  como hecho lo no medido—, pero esta vez alojado en un **criterio de aceptación**, que es el peor sitio
+  posible. Un criterio de aceptación es una orden: si el ejecutor hubiera «arreglado» algo para llegar a
+  150 —tests inflados, parametrizaciones partidas—, el daño lo habría causado el arquitecto, y habría
+  llegado disfrazado de cumplimiento. Un hecho falso en prosa se discute; un hecho falso en una compuerta
+  se obedece.
+- `[INFERENCIA]` **Regla que queda:** ninguna cifra entra en un criterio de aceptación sin el comando que
+  la produce, escrito al lado. Si el comando no está, la cifra es `[ESPECULACIÓN]` y no puede ser
+  compuerta. Corregido el número donde aparecía (cierre de 2.1, más arriba en este archivo).
+
+#### Los tres defectos de este parche, con su mecanismo
+
+- `[HECHO]` **D1 — `.gitignore` se tragaba el dataset.** La línea `dataset/textos/` era preexistente, de
+  cuando el corpus vivía fuera del repo. La decisión cambió —`dataset/` entra y viaja por git— y la línea
+  se quedó. Con ella, `git add dataset/` no commiteaba los 107 PDFs **y no avisaba de nada**: el jurado
+  clonaba sin corpus y ninguna cita del RAG podía verificarse contra su fuente.
+  `[INFERENCIA]` Mecanismo: **una decisión cambió y su implementación no**. El fallo es silencioso por
+  construcción (git ignora sin decir nada), así que no había forma de que se notara sin ir a buscarlo.
+  Verificación de cierre: `git check-ignore -v 'dataset/textos/'` sin coincidencia.
+  Nota metodológica: la comprobación sobre la ruta **sin barra final** daba falso negativo porque
+  `dataset/` no existe todavía en el árbol y git no puede saber que el patrón `dataset/textos/` —que solo
+  casa directorios— aplicaría. La comprobación buena lleva la barra.
+- `[HECHO]` **D2 — el default del LLM apuntaba a un modelo apagado.** Ya desarrollado arriba.
+  `[INFERENCIA]` Mecanismo: **un default heredado de un documento externo, nunca verificado contra el
+  proveedor**. Idéntico al error del arquitecto de más arriba, en otro soporte: dar por hecho un dato de
+  un tercero. Aquí la corrección es estructural y no documental: no hay default, y la sonda comprueba
+  contra el proveedor en cada arranque.
+- `[HECHO]` **D3 — `PROCEDENCIA_DATASET.md` contradecía al README del mismo commit.** El documento
+  afirmaba «No se redistribuyen. `.gitignore` excluye `dataset/textos/`» mientras el README §6 decía que
+  los PDFs viajan por git. Reescrita esa sección: se incluyen en el repositorio, con su aviso de derechos,
+  porque la trazabilidad que exige la rúbrica requiere que la cita sea verificable contra la fuente real.
+  Siguen fuera de la imagen: eso lo hace `.dockerignore`, que es otro archivo y otro problema.
+  `[INFERENCIA]` Mecanismo: **el mismo de D1**, visto desde la documentación. Una decisión revisada dejó
+  atrás dos artefactos —un `.gitignore` y un párrafo— y ninguno de los dos falla al ejecutarse, así que
+  ninguno de los dos avisó.
+- `[INFERENCIA]` Lo que los tres comparten: **ninguno rompe nada al correr**. Un `.gitignore` de más, un
+  párrafo desactualizado y un default apagado pasan el build, pasan los tests y pasan `/salud`. Se cazan
+  leyendo, o no se cazan. Es un argumento a favor de las compuertas que leen —`sin_rutas_absolutas.sh`,
+  la auditoría de `requirements.txt`, y ahora `sondear_llm`— frente a las que solo ejecutan.
+
+#### Deuda saldada
+
+- `[HECHO]` La deuda de rutas absolutas de la Fase 2.1 queda cerrada: `tests/README.md` y
+  `scripts/verificacion_hd1.py` usan `./dataset`, que además pasó a ser **la ruta correcta** al entrar el
+  dataset al repositorio. La lista `DEUDA` de `scripts/sin_rutas_absolutas.sh` queda vacía y la compuerta
+  sale limpia, sin avisos.
+- `[INFERENCIA]` `scripts/verificacion_hd1_salida.txt` **no** se corrige y **sale de la lista de deuda**:
+  es salida capturada de una corrida fechada, no un archivo que alguien ejecute, y editarlo para borrar la
+  ruta de la máquina donde se corrió sería falsear el registro. Estaba mal clasificado: la deuda es lo que
+  hay que arreglar, y esto no se va a arreglar nunca. Pasa a la exclusión dura, junto a `docs/bitacora.md`
+  y `docs/diseno/`, que es la categoría a la que pertenecía desde el principio.
+
+#### Pendiente que este sub-paso deja abierto
+
+- `[HECHO]` **`dataset/` todavía no está en el árbol de trabajo.** La decisión de incluirlo está tomada y
+  el `.gitignore` ya no lo estorba, pero el directorio no existe en el repo local: los 107 PDFs siguen
+  fuera. Copiarlos y commitearlos es un paso pendiente, y hasta que ocurra `/salud` reporta el dataset
+  como AVISO no bloqueante — que es lo que reportó en la verificación de hoy.

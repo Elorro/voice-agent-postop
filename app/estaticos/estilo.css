@@ -1,0 +1,59 @@
+/* Estilos de la portada. La página /salud lleva su CSS incrustado a propósito:
+   tiene que ser legible aunque el montaje de estáticos falle. */
+
+:root {
+  --fondo: #f5f6f8;
+  --tarjeta: #fff;
+  --texto: #14171c;
+  --tenue: #5b6472;
+  --borde: #dfe3e9;
+  --acento: #1a5fb4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fondo: #0e1116;
+    --tarjeta: #161b22;
+    --texto: #e6edf3;
+    --tenue: #9aa4b2;
+    --borde: #2b323c;
+    --acento: #6ea8fe;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 3rem 1rem;
+  background: var(--fondo);
+  color: var(--texto);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main {
+  max-width: 42rem;
+  margin: 0 auto;
+  background: var(--tarjeta);
+  border: 1px solid var(--borde);
+  border-radius: 14px;
+  padding: 2rem;
+}
+
+h1 { margin: 0 0 .25rem; font-size: 1.9rem; letter-spacing: -.02em; }
+
+.lema { margin: 0 0 1.5rem; color: var(--tenue); }
+
+.acciones { margin: 1.75rem 0 1rem; }
+
+.boton {
+  display: inline-block;
+  padding: .7rem 1.3rem;
+  border-radius: 9px;
+  background: var(--acento);
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.tenue { color: var(--tenue); font-size: .9rem; }

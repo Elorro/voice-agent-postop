@@ -1,0 +1,43 @@
+# Lo que NO entra en la imagen.
+#
+# `dataset/` e `indice_base/` viajan por git y se montan como bind (ver
+# compose.yaml). Si además fueran capas de la imagen, el jurado descargaría
+# los mismos bytes dos veces por el mismo canal de red.
+
+dataset/
+indice_base/
+
+# Datos de ejecución: los crea el contenedor sobre volúmenes/binds.
+datos/
+
+# Historia y herramientas de desarrollo.
+.git/
+.gitignore
+.gitattributes
+.github/
+tests/
+conftest.py
+scripts/
+docs/
+requirements-dev.txt
+
+# Artefactos locales.
+__pycache__/
+**/__pycache__/
+*.py[codz]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+
+# Entorno y secretos: la clave entra por `--env-file`, nunca por la imagen.
+.env
+.env.local
+*.key
+
+# Editor / SO.
+.vscode/
+.idea/
+.DS_Store

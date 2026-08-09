@@ -4,7 +4,7 @@
 
 ```bash
 python3 -m pytest tests/ -v
-DATASET_DIR=/home/luis/Projects/ParticipantArtifacts/dataset python3 -m pytest tests/ -v
+DATASET_DIR=./dataset python3 -m pytest tests/ -v
 ```
 
 La primera corrida omite `tests/test_dev_set.py` (skip, no falla): es el único test

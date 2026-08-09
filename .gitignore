@@ -222,9 +222,20 @@ __marimo__/
 .env.local
 *.key
 
-# Datos del reto (NO redistribuir el corpus PDF con derechos de terceros)
-dataset/textos/
+# `dataset/` NO se ignora. Aquí hubo hasta el 2026-08-09 una línea
+# `dataset/textos/`, preexistente de cuando el corpus vivía fuera del repo. La
+# decisión cambió: el dataset entra al repositorio y viaja por git, porque la
+# trazabilidad que exige la rúbrica obliga a que cada cita del RAG sea
+# verificable contra su fuente. Con aquella línea, `git add dataset/` no
+# commiteaba los 107 PDFs y no avisaba de nada: el jurado clonaba sin corpus.
+# La imagen sigue sin llevarlos: eso lo hace `.dockerignore`, que es otro
+# archivo y otro problema.
 
 # Artefactos pesados (decidir en fase posterior si van versionados o restaurados)
 *.sqlite3
 chroma_db/
+
+# Datos de ejecución del contenedor: índice vivo, subidas y logs. Se regeneran
+# solos en cada arranque. `indice_base/` NO va aquí: la semilla del índice sí se
+# versiona, porque viaja al jurado por git y no dentro de la imagen.
+datos/
