@@ -1,0 +1,18 @@
+# Normalización de finales de línea.
+#
+# Motivo: en Windows, git convierte los finales de línea al clonar. Un
+# `docker/entrypoint.sh` que llega al contenedor con CRLF produce
+# "exec format error" o "no such file or directory" al arrancar, sin
+# ninguna pista de la causa. Es el modo de falla número uno de la
+# evaluación G2 en máquinas Windows.
+#
+# Este archivo debe estar en el repositorio ANTES que cualquier .sh.
+
+* text=auto eol=lf
+
+*.sh text eol=lf
+
+*.pdf  binary
+*.xlsx binary
+*.docx binary
+*.onnx binary
