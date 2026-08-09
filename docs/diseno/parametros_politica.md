@@ -128,7 +128,7 @@ que el corpus cubre. Se confirma o se ajusta al indexar los 107 PDFs (deuda RAG,
 ## 3. Nivel 1 — Banderas rojas
 
 Precedencia absoluta. **Si cualquier bandera evalúa `VERDADERO` → ROJO**, en cualquier régimen, sin evaluar
-Nivel 1.5 ni Nivel 2. Si alguna evalúa `DESCONOCIDO`, queda **pendiente** (§5.2).
+Nivel 1.5 ni Nivel 2. Si alguna evalúa `DESCONOCIDO`, queda **pendiente** (§7.1 y §8).
 
 ```yaml
 nivel_1_banderas:
@@ -214,7 +214,7 @@ nivel_1_5_compuerta:
 2. El caso **no puede cerrar en AMARILLO** hasta que **toda** bandera de Nivel 1 evalúe `FALSO`
    (activamente descartada — `DESCONOCIDO` no descarta).
 3. Si al agotar el presupuesto de indagación queda alguna bandera en `DESCONOCIDO` con la compuerta
-   activa → **ROJO** (§6.2).
+   activa → **ROJO** (§8, fila 2).
 
 Es la implementación medible del criterio «amarillo no es clase terminal con bandera roja pendiente»
 (`politica_decision.docx` §4.1), que hasta ahora era un juicio cualitativo sin disparador.
@@ -442,6 +442,10 @@ suficiencia:
 
   ninguno_se_cumple:
     accion: REPREGUNTAR
+    condicion_de_accionabilidad: >
+      existe al menos una senal del nucleo AUSENTE
+      AND queda presupuesto (tope por senal y tope global, §7.2)
+    si_no_es_accionable: CIERRE FORZADO (§7.4)
 ```
 
 `[INFERENCIA]` **S2 se endurece respecto a `politica_decision.docx` §4.2** con dos cláusulas nuevas:
@@ -483,6 +487,60 @@ magnitud, no del valor exacto:
 3. **Discriminadores verde↔amarillo** (apetito, sueño, eritema con banderas ya descartadas). Solo si sobra
    presupuesto: su error cuesta c₂ o c₁, no c₃.
 
+### 7.4 Cierre forzado — cuando `REPREGUNTAR` no es accionable
+
+`[INFERENCIA]` `REPREGUNTAR` es una **acción**, no una clase, y solo existe si hay una
+señal `AUSENTE` que indagar y presupuesto para hacerlo. Cuando ninguna de las dos cosas
+se cumple, el módulo **cierra**. Dos situaciones, y solo dos:
+
+| Situación | Resolución |
+|---|---|
+| **Vector del núcleo completo** (ninguna señal `AUSENTE`) y ninguna S se cumple | Clase de §5.2, **filtrada** (abajo) |
+| **Presupuesto agotado** con alguna señal `AUSENTE` | §8, escalamiento graduado |
+
+**El filtro.** La clase candidata de §5.2 se somete a las prohibiciones ya declaradas,
+en este orden:
+
+1. Si alguna bandera de Nivel 1 está en `DESCONOCIDO` → no puede cerrar en AMARILLO ni
+   en VERDE (§4.1 punto 2) → **ROJO**. *(Inalcanzable con vector completo; se implementa
+   igual.)*
+2. Si la compuerta de Nivel 1.5 está activa y la candidata es VERDE → **AMARILLO**
+   (§4.1 punto 1).
+3. En otro caso, la candidata es la clase terminal.
+
+El filtro **prohíbe salidas, no fuerza clases** — es la misma semántica del §4.1,
+aplicada al punto de cierre.
+
+`[INFERENCIA]` **Por qué esto no viola el invariante duro de §8.1.** El invariante
+prohíbe cerrar en VERDE con evidencia **insuficiente**. Aquí la evidencia está completa:
+se obtuvieron todas las señales del núcleo y no queda pregunta que pudiera cambiar la
+decisión. El invariante sigue mordiendo, sin excepción, en la segunda fila de la tabla.
+
+`[INFERENCIA]` **Alternativa descartada:** promover esos casos a AMARILLO («nunca verde
+con una señal blanda activa»). `[HECHO]` Cuesta 19 c₂ adicionales en régimen temprano
+(4 → 23) y deshace en silencio la decisión de §5.2 de elegir el umbral ≥2 sobre ≥1, que
+se tomó con esa misma comparación de costo a la vista (H4).
+
+`[HECHO]` Sobre el dev set con vector completo, el cierre forzado se activa en **19 de
+160 casos** (11.9 %), todos de régimen temprano con `n_total == 1` exactamente, y los 19
+son verde real. La salida terminal reproduce `recall_rojo = 1.000`, `c₁ = 0`, `c₃ = 0`,
+`c₂ = 11` (4 temprano + 7 tardío). Reproducible con `scripts/verificacion_hd1.py`.
+
+`[INFERENCIA]` **Invariante de consistencia entre §4 y §5** (property test obligatorio):
+en régimen tardío, compuerta 1.5 activa ⟹ `n_total ≥ 1`. Se deriva de que cada condición
+de la compuerta implica una señal blanda: `g_fiebre (37.8) ≥ s_fiebre (37.5)`,
+`g_dolor (5) = s_dolor tardío (5)`, `g_constitucional ⟹ s_apetito ∧ s_sueno`.
+**Depende de los valores actuales, no de la estructura**: si el anclaje al corpus (deuda
+RAG) mueve cualquiera de esos cuatro umbrales, la implicación puede romperse. El paso 2
+del filtro mantiene la salida correcta aunque se rompa; el test existe para que la
+ruptura sea visible en vez de silenciosa.
+
+**Límite declarado.** `[INFERENCIA]` El modelo de valores de §1.1 no distingue «señal no
+obtenida» de «señal obtenida y no confirmada», así que el cierre forzado no puede gastar
+presupuesto en **verificar** la única señal blanda positiva de un caso temprano (p. ej.
+repreguntar si la fiebre se midió con termómetro). Reintroducirlo exigiría un cuarto
+estado por señal. Fuera de alcance de Fase 2; se registra como opción de Fase 3.
+
 ---
 
 ## 8. Escalamiento graduado al agotar presupuesto
@@ -496,6 +554,13 @@ evasión es la norma. La graduación depende de **qué** quedó irresuelto:
 | Compuerta 1.5 activa **y** alguna bandera de Nivel 1 en `DESCONOCIDO` | **ROJO** (§4.1, punto 3) |
 | `dolor_nrs ∈ {5,6}` sin resolver en régimen tardío | **ROJO** — adyacente a bandera. `[HECHO]` en tardío es zona compartida: 6 amarillos y 10 rojos |
 | Solo discriminador verde↔amarillo irresuelto, todas las banderas en `FALSO` | **AMARILLO** con `confianza = baja` y registro de escalamiento (nunca VERDE) |
+| **Nada quedó irresuelto** (vector del núcleo completo) | **No es agotamiento**: se resuelve por §7.4, primera fila |
+
+`[INFERENCIA]` La tabla de §8 está indexada por **qué quedó irresuelto**; por
+construcción no cubre el caso en que no quedó nada. Ese caso es de §7.4, no de
+escalamiento graduado, y la distinción importa: en §8 la evidencia es incompleta y el
+piso es AMARILLO; en §7.4 primera fila la evidencia está completa y VERDE es una salida
+legítima.
 
 ### 8.1 Invariante duro (no se gradúa)
 

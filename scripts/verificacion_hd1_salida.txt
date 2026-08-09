@@ -1,0 +1,54 @@
+# verificacion_hd1.py
+# fecha:   2026-08-08T21:27:39-05:00
+# host:    Linux 7.1.3-200.fc44.x86_64 x86_64 / Python 3.14.6
+# dataset: /home/luis/Projects/ParticipantArtifacts/dataset
+# pandas:  3.0.3
+
+/home/luis/.local/lib/python3.14/site-packages/openpyxl/styles/stylesheet.py:237: UserWarning: Workbook contains no default style, apply openpyxl's default
+  warn("Workbook contains no default style, apply openpyxl's default")
+/home/luis/.local/lib/python3.14/site-packages/openpyxl/styles/stylesheet.py:237: UserWarning: Workbook contains no default style, apply openpyxl's default
+  warn("Workbook contains no default style, apply openpyxl's default")
+========================================================================
+V1 — Criterio de aceptación de 2.1 sobre la SALIDA TERMINAL
+========================================================================
+real      verde  amarillo  rojo
+clase                          
+verde       112         0     0
+amarillo     11        25     0
+rojo          0         0    12 
+
+    OK   recall_rojo          = 1.0
+    OK   C_FN                 = 0
+    OK   c1                   = 0
+    OK   c3                   = 0
+    OK   c2                   = 11
+    OK   c2_temprano          = 4
+    OK   c2_tardio            = 7
+
+========================================================================
+V2 — HD1: cierre forzado (§7.4)
+========================================================================
+    criterio de cierre: {'S2': 93, 'S3': 36, 'CIERRE_FORZADO': 19, 'S1': 12}
+    OK   cierre_forzado       = 19
+
+regimen   n_total  clase  real 
+temprano  1        verde  verde    19
+
+    OK   salida terminal definida para los 160 casos (sin clase: 0)
+
+========================================================================
+V3 — Invariante §4↔§5: compuerta 1.5 activa  =>  n_total >= 1
+========================================================================
+    OK   contraejemplos = 0
+    condiciones que lo sostienen: G_FIEBRE(37.8) >= S_FIEBRE(37.5) -> True | G_DOLOR(5) >= S_DOLOR(5) -> True
+
+========================================================================
+V4 — Evidencia del hueco: §7.1 literal, sin §7.4
+========================================================================
+    {'S2': 93, 'S3': 36, 'REPREGUNTAR': 19, 'S1': 12}
+    OK   repreguntar_literal  = 19
+
+========================================================================
+RESULTADO: todas las verificaciones pasan.
+
+# exit: 0

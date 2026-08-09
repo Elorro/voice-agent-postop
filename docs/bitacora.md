@@ -245,6 +245,9 @@ encontró **seis defectos**, uno de ellos en un parámetro que nunca se había e
   del conjunto que la hace ver bien—, (2) el n efectivo cuando las observaciones no son independientes
   (D4: 12 casos → 6 pacientes), (3) la consulta reproducible en `scripts/`, y (4) el contraejemplo buscado
   explícitamente y no encontrado, no solo la confirmación hallada.
+- **Extendido el 2026-08-08** por una cláusula general sobre la procedencia de todo `[HECHO]`;
+  este correctivo queda como su especialización para afirmaciones sobre muestras. Ver la
+  entrada HD1 de Fase 2.
 
 ### Nota de contagio en los .docx
 - `politica_decision.docx` §1.4 y §6 contienen ahora frases insostenibles —en particular «el escalamiento se
@@ -252,6 +255,152 @@ encontró **seis defectos**, uno de ellos en un parámetro que nunca se había e
 - `protocolo_validacion.docx` §1.2 **no cambia en su conclusión** (los 12 siguen siendo «claros» por unión
   de banderas) **pero sí en su lectura**: 11 de los 12 lo son por fiebre.
 - Ambos conservan su cuerpo sin corregir, como registro histórico, con el aviso de superación al inicio.
+
+---
+
+## Fase 2 — Implementación del módulo de política
+**Estado: ABIERTA.** Sub-paso 2.1 (módulo puro de decisión) en curso.
+
+### 2026-08-08 · HD1 — `REPREGUNTAR` no accionable con vector completo
+
+**Estado: cerrado por especificación** (`parametros_politica.md` §7.1 enmendado + §7.4 nueva + nota en §8).
+El módulo de 2.1 **todavía no se ha escrito**: este parche es documental y precede al código a propósito.
+
+#### Qué era HD1 y cómo apareció
+- `[HECHO]` El arquitecto sometió `parametros_politica.md` a una **auditoría de la spec previa a
+  implementar** — leerla como si fuera el módulo y ejecutarla mentalmente sobre los 160 casos, antes de
+  escribir una línea de `politica/`. HD1 es el primero de los huecos que salieron de ahí.
+- `[HECHO]` Con vector del núcleo completo, **19 de los 160 casos (11.9 %)** no cumplen S1, S2 ni S3 y caen
+  por §7.1 en `ninguno_se_cumple → REPREGUNTAR`. Los 19 son de régimen temprano con `n_total == 1`
+  exactamente, y los 19 son **verde real**.
+- `[INFERENCIA]` `REPREGUNTAR` ahí es una **acción imposible**: no queda ninguna señal `AUSENTE` que
+  preguntar. §8 tampoco los cubre — su tabla está indexada por *qué quedó irresuelto*, y en estos casos no
+  quedó nada irresuelto. La spec dejaba **comportamiento indefinido** en el 11.9 % del dev set.
+
+#### Diagnóstico de raíz
+- `[INFERENCIA]` El defecto no es un umbral mal puesto: es que **`REPREGUNTAR` estaba definido como residuo
+  («ninguno se cumple») y no como condición positiva**. Un residuo hereda todo lo que las condiciones
+  explícitas no atrapan, incluidos casos donde la acción que nombra no puede ejecutarse. La corrección es
+  darle a `REPREGUNTAR` su condición de accionabilidad (señal `AUSENTE` **y** presupuesto) y declarar qué
+  pasa cuando no se cumple.
+
+#### Decisión adoptada y alternativa descartada
+- `[INFERENCIA]` **Cierre forzado (§7.4).** Con vector completo y ninguna S satisfecha, el módulo cierra con
+  la clase candidata de §5.2 **filtrada** por las prohibiciones ya declaradas en §4.1 — el filtro prohíbe
+  salidas, no fuerza clases. No entra ningún parámetro nuevo al repo: §7.4 es semántica, no números.
+- `[INFERENCIA]` **Alternativa descartada:** promover los 19 a AMARILLO («nunca verde con una señal blanda
+  activa»). `[HECHO]` Cuesta **19 c₂ adicionales** en temprano (4 → 23) y deshace en silencio la decisión de
+  §5.2 de elegir el umbral ≥ 2 sobre ≥ 1 — que se tomó con esa misma comparación de costo a la vista (H4).
+  Habría sido reintroducir por la puerta de atrás la regla que §5.2 rechaza por la de adelante.
+- `[INFERENCIA]` El invariante duro de §8.1 (nunca VERDE con evidencia insuficiente) **no se toca**: aquí la
+  evidencia está completa. Sigue mordiendo sin excepción en el caso de presupuesto agotado.
+
+#### El criterio de aceptación de 2.1 no era reproducible antes de este parche
+- `[INFERENCIA]` Hallazgo colateral y más incómodo que HD1 mismo. El criterio de aceptación de 2.1
+  (`recall_rojo = 1.000`, `c₁ = 0`, `c₃ = 0`, `c₂ = 11`) estaba enunciado sobre la **capa de agregación**
+  (§5.2), pero §7.1 **nunca declaraba que la salida de esa capa fuera la salida terminal del módulo** — en
+  19 casos la salida terminal era `REPREGUNTAR`, que no es una clase y no entra en ninguna matriz de
+  confusión. El módulo, implementado literalmente contra la spec vigente, **no podía reproducir su propio
+  criterio de aceptación**. Con §7.4 la salida terminal queda definida para los 160 casos y el criterio pasa
+  a ser verificable sobre lo que el módulo realmente emite.
+
+#### Invariante §4↔§5 y su fragilidad declarada
+- `[INFERENCIA]` **Property test obligatorio para 2.1:** en régimen tardío, compuerta 1.5 activa ⟹
+  `n_total ≥ 1`. Se deriva de que cada condición de la compuerta implica una señal blanda
+  (`g_fiebre 37.8 ≥ s_fiebre 37.5`; `g_dolor 5 = s_dolor` tardío; `g_constitucional ⟹ s_apetito ∧ s_sueno`).
+- `[INFERENCIA]` **Depende de los valores actuales, no de la estructura.** Si el anclaje al corpus
+  (deuda BLOQUEANTE de RAG, y la deuda «Convergencia de `dolor ≥ 5`») mueve cualquiera de esos cuatro
+  umbrales, la implicación puede romperse. El paso 2 del filtro de §7.4 mantiene la salida correcta aunque
+  se rompa; el test existe para que **la ruptura sea ruidosa en vez de silenciosa**. Es una atadura directa
+  entre la deuda de RAG y el módulo de Fase 2: no se puede tocar un umbral de §4 o §5 sin re-correr esto.
+
+#### Evidencia y su estatus
+- `[HECHO]` `scripts/verificacion_hd1.py` es **reimplementación independiente** de la spec: escrita desde el
+  texto de `parametros_politica.md`, sin mirar `scripts/auditoria_fase1.py` ni el módulo de Fase 2 (que no
+  existe aún), y por el arquitecto, no por el ejecutor. Verifica V1 (criterio de aceptación sobre la salida
+  terminal), V2 (desglose del cierre forzado + salida definida para los 160), V3 (invariante §4↔§5) y V4
+  (el hueco: §7.1 literal deja 19 en `REPREGUNTAR`).
+  ```bash
+  DATASET_DIR=/ruta/a/ParticipantArtifacts/dataset python3 scripts/verificacion_hd1.py
+  ```
+- `[INFERENCIA]` **El módulo de 2.1 debe REPRODUCIR sus números, no importarlo.** Si el implementado y su
+  oráculo salen del mismo código, el test no prueba nada — es la misma razón por la que la auditoría de
+  Fase 1 se escribió aparte de los documentos que auditaba.
+- `[HECHO]` La salida de la corrida queda **versionada como evidencia** en
+  `scripts/verificacion_hd1_salida.txt`, con fecha, host, versión de Python y de pandas en
+  la cabecera. Los nueve valores se reproducen idénticos en dos entornos: **Python 3.12.3 /
+  pandas 3.0.2** (entorno efímero del arquitecto, no reproducible por terceros) y **Python
+  3.14.6 / pandas 3.0.3** (Fedora 44, la corrida versionada).
+- `[INFERENCIA]` Eso da independencia frente a la versión **menor** de pandas y frente a la
+  de Python. **No** frente a la mayor: ambos entornos corren pandas 3.x.
+
+#### Convención de espacios de nombres (permanente)
+- `[HECHO]` Al documentar HD1 aparecieron **dos «H1» distintos en el mismo repo**: la armonización H1 de
+  `parametros_politica.md` §6 («febrícula sostenida» no es evaluable) y este hueco de diseño. La colisión no
+  era solo con H1 sino con toda la familia H1–H4.
+- **Convención adoptada, vinculante de aquí en adelante:**
+
+  | Prefijo | Qué numera |
+  |---|---|
+  | `A#`  | Secciones de `scripts/auditoria_fase1.py` (A1–A10) |
+  | `D#`  | Defectos encontrados por la auditoría de Fase 1 (D1–D6) |
+  | `H#`  | Armonizaciones de `parametros_politica.md` §6 (H1–H4) |
+  | `HD#` | **Huecos de diseño** detectados sobre la spec antes de implementar (HD1–HD7 hasta la fecha; rango abierto) |
+
+- `[INFERENCIA]` El «(H4)» que cita §7.4 al descartar la alternativa **se refiere a la armonización de §6 y
+  no se renombra**: con esta convención ya no es ambiguo. El artefacto de evidencia se renombró a
+  `scripts/verificacion_hd1.py` por coherencia; su lógica y sus valores esperados no se tocaron.
+
+#### Errata de referencias (hallazgo colateral)
+- `[HECHO]` Dos cross-refs rotos en `parametros_politica.md`, **ambos preexistentes** a este parche y de la
+  misma familia — apuntan a secciones que no tratan lo que la frase promete:
+  - §4.1 punto 3 remitía a «(§6.2)», que **no existe**: §6 son las armonizaciones H1–H4 y no tiene
+    subsecciones. Corregido a **«(§8, fila 2)»**, que es donde vive la resolución a ROJO por bandera en
+    `DESCONOCIDO` con la compuerta activa.
+  - §3 remitía el manejo de banderas `DESCONOCIDO` («queda **pendiente** (§5.2)») a la **regla de
+    agregación**, que no dice nada de banderas pendientes. Corregido a **«(§7.1 y §8)»**: la compuerta de
+    suficiencia y el escalamiento graduado.
+- `[INFERENCIA]` **No cambian ninguna semántica ni ningún número**: la conducta descrita ya estaba
+  correctamente especificada en su sección real, y las cuatro secciones involucradas se leyeron al verificar
+  §7.4 contra §4.1, §5.2 y §8.1. Se corrigen aquí porque un cross-ref roto en la fuente única de parámetros
+  es una trampa para quien implemente 2.1 leyendo la spec de corrido.
+
+#### Errata de este mismo parche
+- `[HECHO]` La primera redacción de la viñeta anterior decía «Python 3.12 / pandas 2.x» y lo
+  etiquetaba `[HECHO]`. El dato salió de la memoria del arquitecto, no de una consulta: la
+  versión real era pandas 3.0.2. Arrastraba además la conclusión «el resultado no depende de
+  la versión de pandas», que ninguno de los dos entornos sostiene. Se detectó al verificar
+  antes de aprobar el diff.
+- `[INFERENCIA]` Es el mismo mecanismo del «Patrón de fondo» de
+  `enmienda_auditoria_fase1.md` —afirmar como hecho lo que no se midió— reaparecido en el
+  documento que establece el correctivo, y cometido por el arquitecto, no por el ejecutor.
+  Se registra en vez de corregirse en silencio: el correctivo permanente aplica a quien lo
+  escribió.
+- `[HECHO]` Bug relacionado, ya corregido por el ejecutor: el snippet de captura del
+  arquitecto estampaba `# exit: $?` después de un `print` intermedio, así que el campo daba
+  0 siempre, incluso con el script fallando. Fabricaba evidencia tranquilizadora. Corregido
+  guardando `rc=$?` inmediatamente tras la llamada a Python.
+
+#### Extensión del correctivo permanente (2026-08-08)
+
+- `[INFERENCIA]` El correctivo de Fase 1 —toda afirmación de pureza declara su n y su n
+  efectivo, su consulta reproducible y el contraejemplo buscado— **no cubrió este fallo**.
+  D1–D5 fueron consultas mal formuladas sobre datos que existían: el dato se consultó mal.
+  La errata de pandas fue **no consultar nada**. `pandas.__version__` no tiene n ni muestra
+  que declarar; solo hay que mirarlo, y no se miró.
+- `[INFERENCIA]` **Cláusula general adoptada, vinculante para toda etiqueta `[HECHO]` del
+  proyecto:** un `[HECHO]` declara el **procedimiento que lo produjo** — el comando, el
+  archivo y línea, o la consulta. Si no hay procedimiento que declarar, no es `[HECHO]`: es
+  `[INFERENCIA]` o `[ESPECULACIÓN]`. El correctivo de Fase 1 pasa a ser la **especialización**
+  de esta cláusula para afirmaciones sobre muestras, no una regla paralela.
+- `[INFERENCIA]` **Proporcionalidad, para que la regla se cumpla en vez de decorar:** el
+  procedimiento va inline cuando la comprobación es un comando (`python3 -c 'import pandas;
+  print(pandas.__version__)'`); va a `scripts/` cuando la afirmación es sobre el dataset y
+  un tercero tiene que poder re-correrla. Lo que no admite excepción es que exista.
+- `[INFERENCIA]` **Por qué la cláusula general y no una regla de metadatos de entorno:** la
+  estructura del fallo no es el objeto de la afirmación, es su procedencia. Una regla por
+  tipo de objeto deja fuera el siguiente tipo. Se prefiere la regla general, con el mismo
+  criterio de H2: menos ramas es menos superficie de contradicción futura.
 
 ---
 
@@ -309,6 +458,13 @@ encontró **seis defectos**, uno de ellos en un parámetro que nunca se había e
   cerrar en verde, la otra cuenta para el agregado). Al resolver el anclaje al corpus, ambas
   filas deben converger o justificar por qué difieren. **Mientras tanto no se editan por
   separado: cambiar una sin la otra es un bug silencioso.**
+- **[Fase 3 · menor · NO bloqueante de 2.1] Limitación declarada: no existe el estado «señal obtenida sin
+  confirmar».** El modelo de valores de `parametros_politica.md` §1.1 no distingue «señal no obtenida» de
+  «señal obtenida y no confirmada», así que el cierre forzado (§7.4) **no puede gastar presupuesto en
+  verificar una señal blanda aislada en régimen temprano** (p. ej. repreguntar si la fiebre se midió con
+  termómetro) — con vector completo no hay nada `AUSENTE` que indagar, aunque el único positivo del caso sea
+  precisamente el que convendría confirmar. Reintroducirlo exigiría un **cuarto estado por señal**. Fuera de
+  alcance de Fase 2; se registra como opción de Fase 3.
 - **[Fase RAG] Confianza desigual entre las tres anclas externas.** `[INFERENCIA]` El umbral
   febril de 38.0 °C y la partición NRS 7–10 son convenciones clínicas establecidas. La ventana
   de presentación de la ISQ superficial desde el día 4 —que es lo que fija el corte del
