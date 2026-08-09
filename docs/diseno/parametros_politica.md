@@ -28,8 +28,9 @@ diseño · `[ESPECULACIÓN]` supuesto sin medición directa, declarado.
 
 ## 1. Dominios de las señales
 
-`[HECHO]` Verificado sobre `trayectorias_postop_silver.xlsx` (hoja `result`, 160 filas, 0 nulos en las ocho
-columnas del núcleo).
+`[HECHO]` Verificado sobre `trayectorias_postop_silver.xlsx` (hoja `result`, 160 filas, 0 nulos en las
+**siete columnas de la tabla**). Reproducible: aserción de nulos en `cargar()` de
+`scripts/verificacion_hd1.py`.
 
 | Señal | Tipo | Dominio declarado | Observado en el dev set |
 |---|---|---|---|
@@ -88,6 +89,51 @@ es implementable.
 | D | V | D | **V** |
 | D | F | **F** | D |
 | D | D | D | D |
+
+### 1.2 El núcleo — definición intensional
+
+`[INFERENCIA]` **«Núcleo» se reserva de aquí en adelante para el conjunto de señales de la política.** La
+tabla de §1 lista las **siete columnas** que el join debe traer completas — un hecho sobre el dataset, no un
+conjunto de la política: incluye `dia_postop`, que es dato del seguimiento y no señal indagable. El núcleo
+son las **seis señales** que el agente debe cosechar. Los dos conjuntos difieren exactamente en `dia_postop`
+y no deben confundirse: uno gobierna la integridad del dataset, el otro gobierna S2 y el invariante duro de
+§8.1.
+
+`[INFERENCIA]` **El núcleo es el conjunto de señales que aparecen en algún predicado de §3, §4 o §5.** No se
+enumera: se deriva. Hoy esa unión es exactamente
+
+```
+nucleo = { herida, movilidad, fiebre_c, dolor_nrs, apetito, sueno }
+```
+
+y ninguna sobra: si falta cualquiera de las seis, o una bandera de Nivel 1 queda en `DESCONOCIDO`, o la
+compuerta de Nivel 1.5 queda en `DESCONOCIDO`, o el conteo de §5 queda incompleto.
+
+`[INFERENCIA]` **`dia_postop` NO pertenece al núcleo.** §2 ya lo establece: es dato del seguimiento, no algo
+a inferir del paciente — **no es indagable**. El papel del núcleo en S2 (§7.1) y en el invariante duro
+(§8.1) es «ya se preguntó todo lo que se podía preguntar»; incluir en ese conjunto algo que no se pregunta
+rompe la definición desde dentro. Su ausencia tiene tratamiento propio y suficiente en §2.1: régimen TARDÍO
+más `marca_incertidumbre`.
+
+`[INFERENCIA]` **Qué se rompía con la lectura contraria.** Si `dia_postop` estuviera en el núcleo, un caso
+con día desconocido y las seis señales clínicas obtenidas fallaría S2, declararía `REPREGUNTAR` accionable
+por la letra de §7.1 —hay una señal del núcleo `AUSENTE`—, y el agente gastaría el presupuesto entero en una
+pregunta sin destinatario, para caer al agotarse en AMARILLO por §8. Todo caso con día desconocido cerraría
+en AMARILLO en el mejor de los casos, contradiciendo §2.1, que lo trata como manejable. Es HD1 reapareciendo
+por otra puerta: una acción declarada accionable que no puede ejecutarse.
+
+`[INFERENCIA]` **Por qué intensional y no una lista.** Definido como unión de los predicados vigentes, el
+núcleo se mantiene solo: si el anclaje al corpus (deuda RAG) añade o retira un predicado, el conjunto se
+ajusta sin que nadie recuerde editar una lista en otro archivo. Una lista enumerada sería un segundo lugar
+donde vive un parámetro, contra la regla 1 de §0.
+
+`[INFERENCIA]` **Consecuencia declarada, verificable en Fase 3.** Con seis señales en el núcleo y el tope
+global en 6 turnos (`[ESPECULACIÓN]`, §7.2), alcanzar S2 exige cosecha perfecta. En capa 2 se espera que
+VERDE sea infrecuente y que la tasa de AMARILLO suba. Es el primer sitio donde mirar si los topes resultan
+cortos al calibrarlos.
+
+`[HECHO]` No decidible por el dev set: los 160 casos tienen las siete columnas completas, cero ausencias
+(`scripts/verificacion_hd1.py`, aserción de nulos en `cargar()`).
 
 ---
 
@@ -214,7 +260,19 @@ nivel_1_5_compuerta:
 2. El caso **no puede cerrar en AMARILLO** hasta que **toda** bandera de Nivel 1 evalúe `FALSO`
    (activamente descartada — `DESCONOCIDO` no descarta).
 3. Si al agotar el presupuesto de indagación queda alguna bandera en `DESCONOCIDO` con la compuerta
-   activa → **ROJO** (§8, fila 2).
+   activa → **ROJO** (§8, caso «alguna bandera de Nivel 1 en `DESCONOCIDO`»).
+
+`[INFERENCIA]` **La compuerta en `DESCONOCIDO` cuenta como activa** a efectos de prohibir salidas. Bajo
+Kleene fuerte la disyunción de §4 puede evaluar `DESCONOCIDO`, y §7.1 (S2) y §8 la nombran en binario; esta
+cláusula resuelve el tercer valor en la dirección segura.
+
+`[INFERENCIA]` **Su costo hoy es cero, y conviene saber por qué.** Para alcanzar cualquier salida distinta
+de ROJO, todas las banderas deben estar en `FALSO`, luego `herida`, `movilidad`, `fiebre_c` y `dolor_nrs`
+son conocidas y `g_fiebre` y `g_dolor` están determinadas. La única condición que puede quedar en
+`DESCONOCIDO` es `g_constitucional`, y si la disyunción entera queda en `DESCONOCIDO` es porque las otras
+dos son `FALSO` — caso que §8 ya resuelve en AMARILLO, lo mismo que da tratarla como activa. La cláusula se
+escribe igual: la neutralidad depende de la estructura actual, no es una ley, y sin declararla alguien
+podría eliminarla por «redundante» y reintroducir el hueco cuando esa estructura cambie.
 
 Es la implementación medible del criterio «amarillo no es clase terminal con bandera roja pendiente»
 (`politica_decision.docx` §4.1), que hasta ahora era un juicio cualitativo sin disparador.
@@ -514,7 +572,8 @@ aplicada al punto de cierre.
 `[INFERENCIA]` **Por qué esto no viola el invariante duro de §8.1.** El invariante
 prohíbe cerrar en VERDE con evidencia **insuficiente**. Aquí la evidencia está completa:
 se obtuvieron todas las señales del núcleo y no queda pregunta que pudiera cambiar la
-decisión. El invariante sigue mordiendo, sin excepción, en la segunda fila de la tabla.
+decisión. El invariante sigue mordiendo, sin excepción, en el caso «presupuesto agotado
+con alguna señal `AUSENTE`».
 
 `[INFERENCIA]` **Alternativa descartada:** promover esos casos a AMARILLO («nunca verde
 con una señal blanda activa»). `[HECHO]` Cuesta 19 c₂ adicionales en régimen temprano
@@ -548,19 +607,33 @@ estado por señal. Fuera de alcance de Fase 2; se registra como opción de Fase 
 `[INFERENCIA]` No todo agotamiento resuelve a ROJO — eso sobre-escalaría masivamente en capa 2, donde la
 evasión es la norma. La graduación depende de **qué** quedó irresuelto:
 
-| Situación al agotar el presupuesto | Resolución |
-|---|---|
-| Alguna bandera de Nivel 1 en `DESCONOCIDO` | **ROJO** |
-| Compuerta 1.5 activa **y** alguna bandera de Nivel 1 en `DESCONOCIDO` | **ROJO** (§4.1, punto 3) |
-| `dolor_nrs ∈ {5,6}` sin resolver en régimen tardío | **ROJO** — adyacente a bandera. `[HECHO]` en tardío es zona compartida: 6 amarillos y 10 rojos |
-| Solo discriminador verde↔amarillo irresuelto, todas las banderas en `FALSO` | **AMARILLO** con `confianza = baja` y registro de escalamiento (nunca VERDE) |
-| **Nada quedó irresuelto** (vector del núcleo completo) | **No es agotamiento**: se resuelve por §7.4, primera fila |
+| ¿Alguna bandera de Nivel 1 en `DESCONOCIDO`? | ¿Falta alguna señal del núcleo (§1.2)? | Resolución |
+|---|---|---|
+| **Sí** | — | **ROJO** |
+| No | **Sí** | **AMARILLO** con `confianza = baja` y registro de escalamiento (nunca VERDE) |
+| No | No | **No es agotamiento** → §7.4, caso «vector del núcleo completo» |
 
-`[INFERENCIA]` La tabla de §8 está indexada por **qué quedó irresuelto**; por
-construcción no cubre el caso en que no quedó nada. Ese caso es de §7.4, no de
-escalamiento graduado, y la distinción importa: en §8 la evidencia es incompleta y el
-piso es AMARILLO; en §7.4 primera fila la evidencia está completa y VERDE es una salida
-legítima.
+`[INFERENCIA]` **La tabla es una partición, y es exhaustiva por construcción.** Si ninguna bandera está en
+`DESCONOCIDO`, entonces `herida`, `movilidad`, `fiebre_c` y `dolor_nrs` son conocidas, así que las únicas
+señales del núcleo que pueden faltar son `apetito` y `sueno` — ambas discriminadores verde↔amarillo. La
+premisa del caso «falta alguna señal del núcleo» no hay que verificarla: se cumple sola.
+
+`[INFERENCIA]` **Dos filas eliminadas por redundancia, no por cambio de política:**
+- «Compuerta 1.5 activa **y** alguna bandera en `DESCONOCIDO` → ROJO» está subsumida por el caso «alguna
+  bandera de Nivel 1 en `DESCONOCIDO`»: la bandera en `DESCONOCIDO` ya basta.
+- «`dolor_nrs ∈ {5,6}` sin resolver en tardío → ROJO» **no era expresable**: §1.1 declara
+  `Valor(señal) ::= <dominio> | AUSENTE`, sin intervalos, así que «saber que está entre 5 y 6» no tiene
+  representación. Si `dolor` está `AUSENTE` en tardío, `dolor_severo` queda en `DESCONOCIDO` y el caso
+  «alguna bandera de Nivel 1 en `DESCONOCIDO`» ya resuelve ROJO — mismo resultado. Representar conocimiento parcial exigiría un valor de intervalo
+  por señal, que se descarta para Fase 2 (emparentado con la deuda menor «no existe el estado señal obtenida
+  sin confirmar»).
+
+`[INFERENCIA]` **Riesgo que esta tabla concentra, y dónde se contiene.** El caso «alguna bandera de Nivel 1
+en `DESCONOCIDO`» convierte cualquier señal de bandera sin resolver en ROJO: un paciente verde que evade la pregunta sobre la herida y agota el
+presupuesto sale escalado — c₄, la celda del «agente alarmista», y el jurado prueba verdes. Lo único que
+impide que esto sea un cañón de escalamientos es el orden de prioridad de §7.3, que manda indagar primero
+las señales adyacentes a bandera. **§7.3 es por tanto portante de costo, no solo de seguridad**, y su orden
+tiene que ser determinista y tener test propio cuando se fije el contrato del módulo (HD6).
 
 ### 8.1 Invariante duro (no se gradúa)
 

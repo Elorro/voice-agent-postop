@@ -402,6 +402,125 @@ El módulo de 2.1 **todavía no se ha escrito**: este parche es documental y pre
   tipo de objeto deja fuera el siguiente tipo. Se prefiere la regla general, con el mismo
   criterio de H2: menos ramas es menos superficie de contradicción futura.
 
+### 2026-08-08 · HD2, HD3 y HD4 — núcleo, compuerta en `DESCONOCIDO` y partición de §8
+
+**Estado: cerrados por especificación** (`parametros_politica.md` §1.2 nueva + §4.1 ampliada + §8 tabla
+reescrita). Como el parche de HD1, es documental y **precede al código a propósito**: el módulo de 2.1 sigue
+sin escribirse.
+
+- `[INFERENCIA]` **Los tres son semánticos.** Ningún parámetro nuevo, ningún valor modificado, ninguna fila
+  de §10 tocada. Lo que cambia es qué significa la spec donde antes admitía dos lecturas.
+- `[HECHO]` **Ninguno es decidible por el dev set:** los 160 casos tienen las siete columnas completas, cero
+  ausencias (`scripts/verificacion_hd1.py`, aserción de nulos en `cargar()`). Los tres huecos viven en el
+  régimen de evidencia parcial, que es capa 2 y no existe en capa 1.
+
+#### HD2 — el núcleo no estaba definido en ninguna parte
+
+- `[HECHO]` «Todas las señales del núcleo» aparece en S2 (§7.1), en la condición de accionabilidad de
+  `REPREGUNTAR`, en §7.4 y en el invariante duro (§8.1). El conjunto al que se refiere **no estaba escrito**.
+- `[INFERENCIA]` **Definición intensional, no lista:** el núcleo es el conjunto de señales que aparecen en
+  algún predicado de §3, §4 o §5. Hoy la unión es exactamente
+  `{herida, movilidad, fiebre_c, dolor_nrs, apetito, sueno}` — seis, y ninguna sobra. Una lista enumerada
+  sería un segundo lugar donde vive un parámetro, contra la regla 1 de §0; definido como unión, si el
+  anclaje al corpus añade o retira un predicado el conjunto se ajusta solo.
+- `[INFERENCIA]` **`dia_postop` queda fuera.** §2 ya lo establecía como dato del seguimiento, **no
+  indagable**. El papel del núcleo en S2 y en §8.1 es «ya se preguntó todo lo que se podía preguntar»;
+  meter ahí algo que no se pregunta rompe la definición desde dentro.
+- `[INFERENCIA]` **Modo de fallo evitado — HD1 por otra puerta.** Con `dia_postop` en el núcleo, un caso con
+  día desconocido y las seis señales clínicas obtenidas fallaría S2, declararía `REPREGUNTAR` **accionable**
+  por la letra de §7.1, y el agente gastaría el presupuesto entero en una pregunta **sin destinatario** para
+  caer en AMARILLO por §8. Todo caso con día desconocido cerraría en AMARILLO en el mejor de los casos,
+  contra §2.1, que lo trata como manejable con régimen TARDÍO + `marca_incertidumbre`. Es exactamente la
+  patología de HD1 —una acción declarada accionable que no puede ejecutarse— reapareciendo en otro punto de
+  la spec.
+- `[INFERENCIA]` **Consecuencia declarada, no resuelta:** seis señales de núcleo contra un tope global de 6
+  turnos (`[ESPECULACIÓN]`, §7.2) significa que alcanzar S2 exige **cosecha perfecta**. En capa 2 se espera
+  VERDE infrecuente y AMARILLO al alza. Es el primer indicador de que los topes quedaron cortos, y se mide
+  en Fase 3, no se ajusta ahora.
+
+#### HD3 — la compuerta de Nivel 1.5 en `DESCONOCIDO`
+
+- `[HECHO]` Bajo Kleene fuerte (§1.1) la disyunción de §4 puede evaluar `DESCONOCIDO`, pero §7.1 (S2) y §8
+  la nombran en binario («activa» / «no activa»). El tercer valor no tenía dirección declarada.
+- `[INFERENCIA]` **Se resuelve en la dirección segura: `DESCONOCIDO` cuenta como activa** a efectos de
+  prohibir salidas.
+- `[INFERENCIA]` **Su costo hoy es cero por estructura, no por decreto** — y eso es lo que había que
+  escribir. Para alcanzar cualquier salida distinta de ROJO todas las banderas deben estar en `FALSO`, luego
+  `g_fiebre` y `g_dolor` están determinadas y la única condición que puede quedar `DESCONOCIDO` es
+  `g_constitucional`; si la disyunción entera queda `DESCONOCIDO` es porque las otras dos son `FALSO`, caso
+  que §8 ya resuelve en AMARILLO. La cláusula se escribe **igual**: la neutralidad depende de la estructura
+  actual y sin declararla alguien la borra por «redundante» y reabre el hueco cuando esa estructura cambie.
+
+#### HD4 — §8 pasa a partición binaria
+
+- `[INFERENCIA]` La tabla de cinco filas indexadas por «qué quedó irresuelto» no era una partición: dos
+  situaciones podían encajar en varias filas y el orden de lectura decidía. Se reemplaza por una tabla de
+  **dos preguntas binarias** — ¿alguna bandera en `DESCONOCIDO`? ¿falta alguna señal del núcleo (§1.2)? —
+  con tres celdas alcanzables.
+- `[INFERENCIA]` **Exhaustiva por construcción, y la premisa de la segunda fila se cumple sola:** si ninguna
+  bandera está en `DESCONOCIDO`, entonces `herida`, `movilidad`, `fiebre_c` y `dolor_nrs` son conocidas, así
+  que las únicas señales del núcleo que pueden faltar son `apetito` y `sueno` — ambas discriminadores
+  verde↔amarillo. No hay que verificarla en el código.
+- `[INFERENCIA]` **Dos filas eliminadas por redundancia. No hay cambio de política: el mapa
+  situación→resolución es idéntico**, solo cambia la forma.
+  - «Compuerta 1.5 activa **y** bandera en `DESCONOCIDO` → ROJO» está **subsumida**: la bandera en
+    `DESCONOCIDO` ya basta, con compuerta o sin ella.
+  - «`dolor_nrs ∈ {5,6}` sin resolver en tardío → ROJO» **no era expresable**: §1.1 declara
+    `Valor(señal) ::= <dominio> | AUSENTE`, sin intervalos, así que «saber que está entre 5 y 6» no tiene
+    representación en el modelo de valores. Con `dolor` `AUSENTE` en tardío, `dolor_severo` queda
+    `DESCONOCIDO` y la primera fila ya da ROJO — **mismo resultado**. Representar conocimiento parcial
+    exigiría un valor de intervalo por señal; se descarta para Fase 2 y queda emparentado con la deuda menor
+    «no existe el estado señal obtenida sin confirmar».
+- `[INFERENCIA]` **Riesgo de c₄ que la primera fila concentra.** Cualquier señal de bandera sin resolver al
+  agotar el presupuesto sale ROJO: un verde que evade la pregunta sobre la herida se escala. Eso es c₄ —la
+  celda del «agente alarmista»— y el jurado prueba verdes. Lo único que impide que sea un cañón de
+  escalamientos es el orden de §7.3, que manda indagar **primero** las señales adyacentes a bandera.
+- `[INFERENCIA]` **§7.3 queda elevada a portante de costo, no solo de seguridad.** Su orden tiene que ser
+  determinista y llevar test propio. **HD6 sube de prioridad** en el contrato del módulo por esta razón.
+
+#### Hallazgos colaterales y regla adoptada
+
+- `[HECHO]` **Preexistente:** §1 afirmaba «0 nulos en las **ocho** columnas del núcleo». Son **siete**, y es
+  lo que asegura `cargar()` en `scripts/verificacion_hd1.py`. Era un `[HECHO]` que **no reproducía su propia
+  aserción** — precisamente lo que prohíbe la cláusula de procedencia adoptada en la entrada de HD1.
+  Corregido a «siete columnas de la tabla» **con el procedimiento declarado inline**.
+- `[INFERENCIA]` El conteo era el síntoma; el problema era que **«núcleo» nombraba dos objetos distintos**:
+  las columnas que el join debe traer sin nulos (7, hecho sobre el dataset) y las señales que el agente debe
+  cosechar (6, concepto de la política). Difieren exactamente en `dia_postop`. §1.2 reserva la palabra para
+  el segundo y declara la distinción; §1 ya no la usa.
+- `[HECHO]` **Referencia rota por segunda vez en dos parches:** el parche de HD1 redirigió §4.1 punto 3 a
+  «(§8, fila 2)», y la Edición de HD4 elimina esa fila — el destino habría pasado a decir AMARILLO donde la
+  frase afirma ROJO. Detectado al leer §4.1 y §8 antes de editar.
+- **Regla adoptada, vinculante de aquí en adelante: las referencias cruzadas citan la condición, no la
+  posición.** §4.1 punto 3 pasa a «(§8, caso "alguna bandera de Nivel 1 en `DESCONOCIDO`")»; §8 remite a
+  «§7.4, caso "vector del núcleo completo"»; la nota de §7.4 cita «el caso "presupuesto agotado con alguna
+  señal `AUSENTE`"». `[INFERENCIA]` Una cita por posición se rompe en silencio cada vez que la tabla cambia
+  de forma —ya ocurrió dos veces seguidas— mientras que la condición sobrevive a cualquier reordenamiento.
+- `[INFERENCIA]` La regla **no admite excepción por proximidad**. Dos de las tres menciones intra-sección no
+  describían la tabla sino que argumentaban sobre ella —la demostración de exhaustividad y el argumento del
+  riesgo de c₄—; un reordenamiento no las volvería confusas sino **falsas**, bajo una etiqueta
+  `[INFERENCIA]`. Una descripción que envejece mal se nota al leerla; una demostración que envejece mal se
+  sigue leyendo bien. Se prefiere la regla sin ramas, mismo criterio que H2.
+- `[INFERENCIA]` **Alcance de la regla: documentos normativos.** Aplica a `parametros_politica.md` y a
+  cualquier documento que afirme sobre el estado vigente. **No aplica a esta bitácora ni a
+  `enmienda_auditoria_fase1.md`**: son registro fechado, afirman sobre el estado del repo en su fecha, y una
+  referencia posicional en ellos describe correctamente algo que ya pasó. Es la misma razón por la que los
+  `.docx` conservan su cuerpo con errores conocidos y por la que la enmienda no se reescribe: las decisiones
+  nuevas entran con fecha, no reescribiendo lo cerrado.
+
+#### Estado de la spec tras este parche
+
+- `[INFERENCIA]` **Los cuatro huecos bloqueantes de la spec quedan cerrados.** 2.1 puede escribirse sin que
+  el implementador tenga que decidir nada por su cuenta sobre política.
+- `[INFERENCIA]` Quedan **HD5** (firma y tipo de retorno del módulo), **HD6** (desempate determinista en
+  `REPREGUNTAR`) y **HD7** (contabilidad del presupuesto en un módulo sin estado). Los tres son **contrato
+  del módulo, no política**: se cierran al escribir 2.1, no antes, y su resolución no toca
+  `parametros_politica.md` salvo que revele un hueco de política nuevo.
+- `[HECHO]` `scripts/verificacion_hd1.py` vuelve a pasar sin cambios tras las tres ediciones
+  (`RESULTADO: todas las verificaciones pasan`, código 0), que es la comprobación de que ninguna alteró
+  comportamiento sobre el dev set. La salida versionada de HD1 **no se regeneró**: conserva su contenido y
+  su fecha como evidencia de aquel parche.
+
 ---
 
 ## Deudas y pendientes abiertos
@@ -426,6 +545,11 @@ El módulo de 2.1 **todavía no se ha escrito**: este parche es documental y pre
 
   Citarlas en el registro de escalamiento (`citas_RAG`, hoy vacío para las cuatro). Riesgo: si el corpus no
   sustenta (a), la cobertura defendible del Nivel 1 cae a 11/12.
+- **[Fase 3] Verificar la consecuencia declarada de HD2.** Medir sobre capa 2 la tasa de **S2 alcanzado** y
+  la de **AMARILLO por agotamiento**. Con seis señales de núcleo (`parametros_politica.md` §1.2) contra un
+  tope global de 6 turnos, S2 exige cosecha perfecta. Si VERDE resulta casi inalcanzable, **el sospechoso es
+  el tope global de 6, no la política** — se calibra el tope antes de tocar ningún umbral. Emparentada con la
+  deuda de calibración de topes, de la que es el criterio de disparo.
 - **[Fase 3] Calibración de los topes de indagación.** Los valores fijados (2 por señal, 6 global) son
   `[ESPECULACIÓN]` dentro de los rangos declarados 2–3 y 6–8. Calibrar en prototipo midiendo sobre capa 2
   (no capa 1).
