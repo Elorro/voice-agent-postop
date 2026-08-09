@@ -1,0 +1,203 @@
+base: /home/luis/Projects/ParticipantArtifacts/dataset
+[OK] dataset_final.xlsx: 3991 filas × 13 cols
+[OK] trayectorias_postop_silver.xlsx: 160 filas × 12 cols
+
+========================================================================
+0. ESQUEMA REAL (verificar antes de confiar en nombres)
+========================================================================
+
+--- dataset_final ---
+columnas: ['dialogo_id', 'caso_id', 'paciente_id', 'dia_postop', 'turno_idx', 'hablante', 'texto', 'label_ground_truth', 'estilo_paciente', 'modelo_paciente', 'modelo_agente', 'capa', 'generado_ts']
+dtypes:
+dialogo_id                       str
+caso_id                          str
+paciente_id                      str
+dia_postop                     int64
+turno_idx                      int64
+hablante                         str
+texto                            str
+label_ground_truth               str
+estilo_paciente                  str
+modelo_paciente                  str
+modelo_agente                    str
+capa                             str
+generado_ts           datetime64[us]
+
+--- trayectorias_silver ---
+columnas: ['trayectoria_id', 'paciente_id', 'dia_postop', 'arquetipo_trayectoria', 'dolor_nrs', 'fiebre_c', 'movilidad', 'herida', 'apetito', 'sueno', 'seed', 'generado_ts']
+dtypes:
+trayectoria_id                      str
+paciente_id                         str
+dia_postop                        int64
+arquetipo_trayectoria               str
+dolor_nrs                         int64
+fiebre_c                        float64
+movilidad                           str
+herida                              str
+apetito                             str
+sueno                               str
+seed                              int64
+generado_ts              datetime64[us]
+
+========================================================================
+Q1. INTEGRIDAD DEL JOIN  caso_id == 'caso_' + trayectoria_id
+========================================================================
+casos únicos en dataset_final:      160
+casos únicos en trayectorias:       160
+intersección:                       160
+solo en dataset_final:              0
+solo en trayectorias:               0
+
+========================================================================
+Q2. DISTRIBUCIÓN DEL LABEL — por CASO (no por turno)
+========================================================================
+[OK] label constante por caso_id (gotcha confirmado)
+
+conteo por caso:
+label_ground_truth
+verde       123
+amarillo     25
+rojo         12
+total casos: 160
+
+(contraste) conteo por TURNO —métrica engañosa, no usar para diseño:
+label_ground_truth
+verde       3067
+amarillo     623
+rojo         301
+[merge señal↔label] 160 casos con señal y label
+
+========================================================================
+Q3. SEPARABILIDAD UNIVARIADA POR SEÑAL (condicionada a clase)
+========================================================================
+
+--- dolor_nrs (numérica) por clase ---
+                    count  min  25%  50%  75%  max
+label_ground_truth                                
+verde               123.0  0.0  1.0  2.0  3.0  6.0
+amarillo             25.0  2.0  4.0  5.0  5.0  6.0
+rojo                 12.0  5.0  5.0  6.0  6.0  9.0
+  rojo.min=5  verde.p90=4.0  -> SEPARAN en cola
+
+--- fiebre_c (numérica) por clase ---
+                    count   min   25%   50%     75%   max
+label_ground_truth                                       
+verde               123.0  36.2  36.6  37.0  37.200  37.9
+amarillo             25.0  36.5  37.1  37.4  37.500  37.9
+rojo                 12.0  37.9  38.0  38.1  38.525  39.5
+  rojo.min=37.9  verde.p90=37.5  -> SEPARAN en cola
+
+--- movilidad (categórica) tabla clase×valor ---
+movilidad           incapacitante_nueva  limitada_esperada  normal
+label_ground_truth                                                
+verde                                 0                 48      75
+amarillo                              0                  9      16
+rojo                                  4                  4       4
+
+--- herida (categórica) tabla clase×valor ---
+herida              eritema_leve  normal  secrecion_purulenta
+label_ground_truth                                           
+verde                         11     112                    0
+amarillo                      19       6                    0
+rojo                           9       0                    3
+
+--- apetito (categórica) tabla clase×valor ---
+apetito             levemente_disminuido  muy_disminuido  normal
+label_ground_truth                                              
+verde                                 25               5      93
+amarillo                               9              12       4
+rojo                                   0              12       0
+
+--- sueno (categórica) tabla clase×valor ---
+sueno               levemente_alterado  muy_alterado  normal
+label_ground_truth                                          
+verde                               29             4      90
+amarillo                             4            16       5
+rojo                                 0            12       0
+
+========================================================================
+Q4. ZONAS AMBIGUAS — rojo/amarillo con señales dentro del rango verde
+========================================================================
+bandas 'aspecto verde' (p10..p90): {'dolor_nrs': (np.float64(0.0), np.float64(4.0)), 'fiebre_c': (np.float64(36.3), np.float64(37.5))}
+
+casos NO-verdes que 'parecen verdes' en señales numéricas: 8
+label_ground_truth
+amarillo    8
+
+detalle (estos son los casos que un clasificador de 1 turno pierde):
+                 caso_id label_ground_truth  dolor_nrs  fiebre_c         movilidad       herida              apetito              sueno
+caso_tray_pac_42_00006_7           amarillo          2      37.2            normal eritema_leve levemente_disminuido       muy_alterado
+caso_tray_pac_42_00013_3           amarillo          4      37.0            normal eritema_leve       muy_disminuido       muy_alterado
+caso_tray_pac_42_00015_3           amarillo          4      37.0 limitada_esperada eritema_leve levemente_disminuido       muy_alterado
+caso_tray_pac_42_00019_1           amarillo          3      37.3 limitada_esperada eritema_leve       muy_disminuido       muy_alterado
+caso_tray_pac_42_00025_7           amarillo          3      37.0 limitada_esperada eritema_leve       muy_disminuido       muy_alterado
+caso_tray_pac_42_00027_3           amarillo          3      37.0            normal eritema_leve       muy_disminuido       muy_alterado
+caso_tray_pac_42_00028_1           amarillo          4      37.3 limitada_esperada eritema_leve       muy_disminuido levemente_alterado
+caso_tray_pac_42_00029_7           amarillo          2      37.4            normal eritema_leve       muy_disminuido       muy_alterado
+
+========================================================================
+Q5. arquetipo_trayectoria — ¿señal legítima o leakage del label?
+========================================================================
+tabla arquetipo × label:
+label_ground_truth            amarillo  rojo  verde
+arquetipo_trayectoria                              
+complicacion_leve_vigilancia        19     0     41
+complicacion_real                    5    12      7
+recuperacion_normal                  1     0     75
+
+pureza por arquetipo (max_clase / total):
+arquetipo_trayectoria
+recuperacion_normal             0.987
+complicacion_leve_vigilancia    0.683
+complicacion_real               0.500
+
+arquetipos con pureza>=0.95: 1/3  -> aporta señal, no es copia del label
+
+========================================================================
+Q6. SONDA: árbol prof<=3 (techo de separabilidad, NO modelo de producción)
+========================================================================
+features: ['dolor_nrs', 'fiebre_c', 'movilidad', 'herida', 'apetito', 'sueno']  |  n=160
+CV estratificada k=5 (limitado por clase minoritaria n=12)
+
+matriz de confusión (filas=real, cols=pred), orden verde/amarillo/rojo:
+          verde  amarillo  rojo
+verde       108        15     0
+amarillo      2        23     0
+rojo          0         1    11
+
+reporte (mira RECALL de 'rojo', es la restricción dura):
+              precision    recall  f1-score   support
+
+       verde       0.98      0.88      0.93       123
+    amarillo       0.59      0.92      0.72        25
+        rojo       1.00      0.92      0.96        12
+
+    accuracy                           0.89       160
+   macro avg       0.86      0.90      0.87       160
+weighted avg       0.92      0.89      0.90       160
+
+reglas del árbol (full-fit, solo para leer qué señales usa):
+|--- fiebre_c <= 37.85
+|   |--- herida <= 0.50
+|   |   |--- dolor_nrs <= 1.50
+|   |   |   |--- class: verde
+|   |   |--- dolor_nrs >  1.50
+|   |   |   |--- class: amarillo
+|   |--- herida >  0.50
+|   |   |--- dolor_nrs <= 4.50
+|   |   |   |--- class: verde
+|   |   |--- dolor_nrs >  4.50
+|   |   |   |--- class: amarillo
+|--- fiebre_c >  37.85
+|   |--- sueno <= 0.50
+|   |   |--- dolor_nrs <= 3.00
+|   |   |   |--- class: verde
+|   |   |--- dolor_nrs >  3.00
+|   |   |   |--- class: amarillo
+|   |--- sueno >  0.50
+|   |   |--- class: rojo
+
+
+========================================================================
+FIN. Tráeme este reporte entero.
+========================================================================

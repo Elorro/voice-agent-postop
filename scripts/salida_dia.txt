@@ -1,0 +1,111 @@
+[merge] 160 casos  |  dias presentes: [np.int64(1), np.int64(3), np.int64(7), np.int64(14)]
+
+========================================================================
+D1. REPARTO casos por dia_postop × clase
+========================================================================
+label_ground_truth  verde  amarillo  rojo
+dia_postop                               
+1                      37         3     0
+3                      28        12     0
+7                      24        10     6
+14                     34         0     6
+
+celdas con 0 casos (no se puede estimar umbral ahí):
+  dia  1 × rojo: 0 casos
+  dia  3 × rojo: 0 casos
+  dia 14 × amarillo: 0 casos
+
+========================================================================
+D2. ¿Se desplaza la señal DENTRO de una clase con el día?
+========================================================================
+(si el verde tolera distinta fiebre/dolor según el día -> umbral debe condicionarse)
+
+--- clase = verde (n=123) ---
+  dolor_nrs:
+            count  min  median  max
+    dia_postop                         
+    1              37    0     3.0    6
+    3              28    0     2.0    6
+    7              24    0     2.0    4
+    14             34    0     2.0    4
+  fiebre_c:
+            count   min  median   max
+    dia_postop                           
+    1              37  36.3   37.10  37.6
+    3              28  36.2   37.10  37.9
+    7              24  36.2   36.95  37.7
+    14             34  36.2   36.80  37.6
+
+--- clase = amarillo (n=25) ---
+  dolor_nrs:
+            count  min  median  max
+    dia_postop                         
+    1             3.0  3.0     4.0  5.0
+    3            12.0  2.0     5.0  6.0
+    7            10.0  2.0     5.0  6.0
+    14            NaN  NaN     NaN  NaN
+  fiebre_c:
+            count   min  median   max
+    dia_postop                           
+    1             3.0  36.5    37.3  37.3
+    3            12.0  36.8    37.4  37.8
+    7            10.0  37.0    37.4  37.9
+    14            NaN   NaN     NaN   NaN
+
+--- clase = rojo (n=12) ---
+  dolor_nrs:
+            count  min  median  max
+    dia_postop                         
+    1             NaN  NaN     NaN  NaN
+    3             NaN  NaN     NaN  NaN
+    7             6.0  5.0     5.5  9.0
+    14            6.0  5.0     6.0  9.0
+  fiebre_c:
+            count   min  median   max
+    dia_postop                           
+    1             NaN   NaN     NaN   NaN
+    3             NaN   NaN     NaN   NaN
+    7             6.0  37.9   38.30  39.3
+    14            6.0  38.0   38.05  39.5
+
+========================================================================
+D3. FRONTERA verde↔rojo por día (¿se mueve el cruce?)
+========================================================================
+
+--- dolor_nrs: max(verde) vs min(rojo) por día ---
+ dia  verde_max  amarillo_max  rojo_min  gap_verde_rojo
+   1          6           5.0       NaN             NaN
+   3          6           6.0       NaN             NaN
+   7          4           6.0       5.0             1.0
+  14          4           NaN       5.0             1.0
+
+--- fiebre_c: max(verde) vs min(rojo) por día ---
+ dia  verde_max  amarillo_max  rojo_min  gap_verde_rojo
+   1       37.6          37.3       NaN             NaN
+   3       37.9          37.8       NaN             NaN
+   7       37.7          37.9      37.9             0.2
+  14       37.6           NaN      38.0             0.4
+
+lectura: si 'verde_max' cambia mucho entre días, un umbral global castiga a unos días.
+        si 'gap_verde_rojo' es >0 y estable, un umbral global simple es defendible.
+
+========================================================================
+D4. Banderas rojas categóricas — ¿su pureza aguanta por día?
+========================================================================
+(purulenta / incapacitante_nueva deben seguir siendo casi solo-rojo en cada día)
+
+--- herida == 'secrecion_purulenta' por día × clase ---
+label_ground_truth  verde  amarillo  rojo
+dia_postop                               
+7                       0         0     2
+14                      0         0     1
+
+--- movilidad == 'incapacitante_nueva' por día × clase ---
+label_ground_truth  verde  amarillo  rojo
+dia_postop                               
+7                       0         0     1
+14                      0         0     3
+
+========================================================================
+FIN. Tráeme el reporte entero.
+========================================================================
