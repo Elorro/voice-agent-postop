@@ -136,3 +136,7 @@ de que el modelo está servido—, porque el cliente del LLM del agente todavía
 está implementado: el repositorio está en el esqueleto de Fase 3. De ninguna de
 las dos rutas se ha medido calidad ni latencia de respuesta. Los números del
 README §9 siguen marcados como PENDIENTE DE MEDICIÓN por esa misma razón.
+
+**Qué imagen corresponde a qué commit:** está en el README, cerca del inicio
+(«Correspondencia imagen ↔ repositorio»), con el digest y el comando para
+comprobarlo. No se repite aquí a propósito: una sola fuente.

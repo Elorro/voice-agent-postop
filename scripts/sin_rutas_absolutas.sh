@@ -48,6 +48,15 @@ PATRONES='(/home/|/Users/|\$\{HOME\}|\$HOME)'
 #       clasificación equivocada: la deuda es lo que hay que arreglar, y este
 #       archivo no se va a arreglar nunca porque corregirlo sería reescribir
 #       una salida que ya ocurrió. Es la misma categoría que la bitácora.
+#   scripts/salida_fase1.txt             — SALIDA CAPTURADA de la exploración de
+#       la Fase 1, misma categoría que la anterior. Movido de `dataset/` a
+#       `scripts/` el 2026-08-09, para que `dataset/` quedara idéntico al
+#       material entregado por el reto. Al entrar a `scripts/` entró al alcance
+#       de esta compuerta, que antes no lo veía, y la puso en rojo por la ruta
+#       de la máquina donde se corrió. No se corrige por la misma razón:
+#       editarla sería falsear el registro. `scripts/salida_dia.txt` viajó en el
+#       mismo movimiento y NO se excluye — se comprobó que no trae rutas
+#       absolutas, y excluir de más vacía la compuerta igual que no tenerla.
 #
 # Este script se excluye a sí mismo porque contiene los patrones que busca.
 
@@ -72,6 +81,7 @@ trap 'rm -f "$listado" "$hallazgos" "$avisos"' EXIT INT TERM
 set -- ':(exclude)docs/bitacora.md' \
        ':(exclude)docs/diseno' \
        ':(exclude)scripts/verificacion_hd1_salida.txt' \
+       ':(exclude)scripts/salida_fase1.txt' \
        ':(exclude)scripts/sin_rutas_absolutas.sh'
 for archivo_en_deuda in $DEUDA; do
     set -- "$@" ":(exclude)${archivo_en_deuda}"

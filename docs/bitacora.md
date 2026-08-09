@@ -906,3 +906,66 @@ no lo sirve nadie, y eso reescribió parte del sub-paso.
   el `.gitignore` ya no lo estorba, pero el directorio no existe en el repo local: los 107 PDFs siguen
   fuera. Copiarlos y commitearlos es un paso pendiente, y hasta que ocurra `/salud` reporta el dataset
   como AVISO no bloqueante — que es lo que reportó en la verificación de hoy.
+
+#### 2026-08-09 · Publicación en GHCR y correspondencia imagen ↔ commit
+
+Máquina: Fedora Linux (x86_64), Docker 29.6.0. Todo lo de esta sección está medido en esa corrida.
+
+- `[HECHO]` **Imagen publicada:** `ghcr.io/elorro/voice-agent-postop:v0.1.0`, digest
+  `sha256:1419829fca3adedf0b01e2052713ce738ed399fe59de482529390e7bf24bb896`.
+  Procedimiento: `docker push ghcr.io/elorro/voice-agent-postop:v0.1.0` → **exitoso, 1m41s**. Digest leído
+  con `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.1.0`.
+- `[HECHO]` **Tamaño comprimido: 300,2 MB** (`300221440` bytes), por
+  `docker save ghcr.io/elorro/voice-agent-postop:v0.1.0 | wc -c`. Mismo número que ya estaba en el README
+  §9.5; se repite aquí porque es el que corresponde al digest de arriba.
+- `[HECHO]` **Visibilidad del paquete: pública**, cambiada a mano en Package settings.
+- `[HECHO]` **Pull anónimo: OK.** Procedimiento: `docker logout ghcr.io` seguido de
+  `docker pull ghcr.io/elorro/voice-agent-postop:v0.1.0`. El digest devuelto coincide con el de arriba.
+- `[HECHO]` **Salvedad, declarada y no omitida:** ese pull anónimo respondió **«Image is up to date»**
+  porque la imagen ya estaba en el disco local. Verificó **autorización**, que era lo que fallaba, pero
+  **no** verificó la descarga completa desde cero. Esa se mide en la corrida de cronometraje en máquina
+  ajena. Mientras tanto, el tiempo de `pull` del jurado no es un dato que tengamos.
+- `[HECHO]` La correspondencia imagen ↔ commit queda escrita en el README, cerca del inicio: la imagen se
+  construyó desde el commit etiquetado `f3-0-cerrada` con el `Dockerfile` del repositorio, y
+  `docker compose build` la reproduce. `docs/DECLARACION_MODELO.md` remite al README en vez de duplicar el
+  digest: **una sola fuente**, porque dos copias de un digest son una copia que en algún momento va a estar
+  desactualizada y nadie va a saber cuál.
+
+#### Hallazgos de G2 encontrados al operar
+
+Ninguno de estos salió de leer el diseño; salieron de ejecutarlo. Los cuatro afectan a la máquina del
+jurado y tres de ellos son **invisibles desde la máquina del autor**.
+
+- `[HECHO]` **Docker crea los orígenes de los binds como propiedad de ROOT.** En Linux con
+  `sudo docker compose up`, los directorios de origen que no existen (`dataset/`, `indice_base/`, `datos/`)
+  los crea el demonio, y quedan de root. Detectado porque un `cp -r` del dataset falló con
+  «Permiso denegado». En la entrega **no** afecta a `dataset/`: llega por `git clone`, o sea con la
+  propiedad del usuario, antes de que Docker pueda crearlo. Pero `indice_base/` y `datos/` **sí** quedarán
+  de root en la máquina del jurado. El README ya documenta `sudo chown -R "$USER" datos`; lo que la corrida
+  de cronometraje tiene que verificar es que esa línea aparece **ANTES** del primer paso que necesita
+  escribir ahí, no después.
+- `[HECHO]` **El paquete de GHCR nace PRIVADO aunque el repositorio sea público.** Hay que cambiar la
+  visibilidad a mano en Package settings. Sin ese paso, el `docker compose pull` del README **falla en la
+  máquina del jurado y G2 muere en el paso 4**. Es invisible desde la máquina del autor, que está
+  autenticada y por tanto autorizada: la única prueba válida es `docker logout ghcr.io` seguido de
+  `docker pull`.
+- `[HECHO]` **Un `.venv` de 352 MB (10 243 archivos) dentro de `dataset/`**, resto de los scripts de
+  exploración de Fase 1, apareció al copiar el dataset. `.gitignore` ya lo excluía, así que nunca habría
+  entrado a git — pero `dataset/` se monta como bind `:ro` en el contenedor, y ahí falsea cualquier
+  medición de tamaño. Eliminado antes del commit. **Tamaño real del dataset: 128 MB en disco, 102 MiB en el
+  pack de git** (medido en el push), que es lo que el jurado descarga en el `clone`.
+- `[HECHO]` **Los cuatro archivos de exploración de Fase 1 (`explora_*.py`, `salida_*.txt`) se movieron de
+  `dataset/` a `scripts/`**, para que `dataset/` quede idéntico al material entregado por el reto y la
+  procedencia documentada sea exacta.
+- `[HECHO]` **Ese movimiento dejó la compuerta `sin_rutas_absolutas.sh` en rojo.** `scripts/salida_fase1.txt`
+  trae `/home/luis/Projects/ParticipantArtifacts/dataset` de la corrida donde se capturó; en `dataset/` la
+  compuerta no lo veía, en `scripts/` sí. Corregido añadiéndolo a la exclusión dura, junto a
+  `scripts/verificacion_hd1_salida.txt` y por el mismo argumento: es salida capturada de una corrida
+  fechada, y editarla sería falsear el registro. `scripts/salida_dia.txt` viajó en el mismo movimiento y
+  **no** se excluyó — se comprobó que no trae rutas absolutas.
+  `[INFERENCIA]` Es otra vez **«una decisión cambió y su implementación no»**, el patrón ya registrado tres
+  veces en este archivo (D1, D3, y el correctivo permanente de la reapertura de Fase 1). Y **el error es del
+  arquitecto**: ordenó el movimiento sin ordenar el ajuste de la compuerta. Mover un archivo cambia qué lo
+  vigila, y eso es parte de la orden de mover, no una consecuencia que el ejecutor deba adivinar. Lo que
+  salva el caso es que aquí el fallo **sí es ruidoso**: la compuerta salió 1 en la primera corrida, a
+  diferencia de D1 y D3, que solo se cazaban leyendo.

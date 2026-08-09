@@ -7,6 +7,13 @@ Agente de voz en español para seguimiento postoperatorio.
 servidos por Groq y Google fueron retirados por sus proveedores. Qué usa esta
 solución y por qué cumple: **[`docs/DECLARACION_MODELO.md`](docs/DECLARACION_MODELO.md)**.
 
+**Correspondencia imagen ↔ repositorio.** La imagen publicada es
+`ghcr.io/elorro/voice-agent-postop:v0.1.0`, digest
+`sha256:1419829fca3adedf0b01e2052713ce738ed399fe59de482529390e7bf24bb896`.
+Se construyó desde el commit etiquetado `f3-0-cerrada` con el `Dockerfile` de
+este repositorio; `docker compose build` lo reproduce. Verificable con
+`docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.1.0`.
+
 > **Estado: esqueleto levantable.** El contenedor arranca, carga sus modelos y
 > reporta su estado componente por componente en `/salud`. El turno de voz, el
 > STT, el LLM, el RAG y la consola clínica **todavía no están implementados**.
@@ -478,12 +485,24 @@ docs/           bitacora.md (fuente de verdad del estado), DECLARACION_MODELO.md
 | Tamaño de la imagen, comprimida (lo que se descarga) | **300,2 MB** | `docker save ghcr.io/elorro/voice-agent-postop:v0.1.0 \| wc -c` → `300221440` |
 | Tamaño de la imagen, en disco | 1,02 GB | `docker images ghcr.io/elorro/voice-agent-postop:v0.1.0` |
 | Carga de embedder + voz, sin red | 2,4 s | `docker run --rm --network none …` (ver §10) |
+| Digest de la imagen publicada | `sha256:1419829fca3adedf0b01e2052713ce738ed399fe59de482529390e7bf24bb896` | `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.1.0` |
+| Push a GHCR | exitoso, **1m41s** | `docker push ghcr.io/elorro/voice-agent-postop:v0.1.0` |
+| Visibilidad del paquete | **pública** | Package settings de GHCR, comprobada desde una sesión sin autenticar |
+| Pull anónimo (sin credenciales) | **OK**, digest coincidente | `docker logout ghcr.io && docker pull ghcr.io/elorro/voice-agent-postop:v0.1.0` |
 
 Presupuesto: 400 MB comprimida. Holgura: **~100 MB**.
 
 La medición anterior (2026-08-09, más temprano) daba **280,4 MB**. La diferencia
 son los 19,8 MB de `kubernetes`, cuya desinstalación se revirtió el mismo día
 (§7). El número vigente es el de arriba: describe la imagen que se entrega.
+
+> **Salvedad sobre el pull anónimo, dicha aquí y no en letra pequeña.** El
+> `docker pull` sin credenciales respondió **«Image is up to date»** porque la
+> imagen ya estaba en el disco local de la máquina donde se probó. Eso verifica
+> la **autorización** —que era exactamente lo que fallaba, con el paquete recién
+> creado en privado—, pero **no** verifica la descarga completa desde cero. La
+> descarga íntegra se mide en la corrida de cronometraje en máquina ajena, y
+> hasta entonces el tiempo de `pull` no es un número medido.
 
 ---
 
