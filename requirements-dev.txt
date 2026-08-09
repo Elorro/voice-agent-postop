@@ -1,0 +1,13 @@
+# Dependencias de DESARROLLO Y TEST. El módulo `politica/` NO depende de nada de
+# aquí: funciona con la librería estándar, y `tests/test_contrato.py` lo verifica
+# leyendo sus imports.
+#
+#   pip install --user -r requirements-dev.txt
+#
+# Versiones fijadas a las de la corrida de 2.1 (Python 3.14.6, Fedora):
+pytest==9.1.1
+
+# Solo para `tests/test_dev_set.py` y `scripts/` (lectura de los .xlsx del dataset).
+# Sin ellas, ese test hace skip; el resto de la suite corre igual.
+pandas==3.0.3
+openpyxl==3.1.5

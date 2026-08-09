@@ -197,26 +197,62 @@ nivel_1_banderas:
     ancla_rag: PENDIENTE      # umbral febril postquirurgico
 
   - id: dolor_severo
-    predimado_nota: "vease predicado"
-    predicado: dolor_nrs >= 7  AND  regimen == TARDIO
-    regimen: SOLO_TARDIO
+    predicado: dolor_nrs >= umbral[regimen]
+    umbral:
+      TARDIO:   7
+      TEMPRANO: 9
+    regimen: AMBOS            # umbral INDEXADO por regimen, no conjuncion con el regimen
     base_empirica: "Captura 2/12 rojos, unica en 1 (A3). Portante: sin ella recall_rojo 1.000 -> 0.917 (A4)."
-    justificacion: "Particion de severidad estandar NRS (7-10 = severo), NO pureza en datos."
-    ancla_rag: PENDIENTE      # dolor severo tardio como signo de alarma
+    justificacion: "Tardio: particion de severidad estandar NRS (7-10 = severo), NO pureza en datos.
+                    Temprano: vease 3.1 — banda sin observaciones, direccion segura por matriz de costos."
+    ancla_rag: PENDIENTE      # dolor severo como signo de alarma, y su graduacion por regimen
 ```
 
 **Estado de anclaje al corpus: las cuatro están `PENDIENTE`.** `[INFERENCIA]` Ninguna bandera tiene hoy
 cita del corpus. La deuda es **bloqueante antes de la sesión de evaluación**, no diferida
 (`enmienda_auditoria_fase1.md`, sección de deuda de RAG). El campo `citas_RAG` del registro de escalamiento
-no se puede emitir hasta que se resuelva.
+no se puede emitir hasta que se resuelva. **El umbral temprano de `dolor_severo` (9) entra a esa deuda como
+ítem propio** (§10, y bitácora del 2026-08-09).
 
-### 3.1 Asimetría de condicionamiento, declarada
+### 3.1 Asimetría de condicionamiento, graduada por umbral
 
-`[INFERENCIA]` `fiebre_franca` **no** se condiciona por régimen y `dolor_severo` **sí**. Es principiado:
-38.0 °C es una definición clínica absoluta independiente del día postoperatorio, mientras que el dolor
-agudo de los días 1–3 es fisiología esperada — `[HECHO]` los verdes tempranos llegan legítimamente a
-`dolor_nrs = 6`, mientras que en tardío `verde_max = 4`. Declarar esto es obligatorio: sin la declaración,
-la inconsistencia aparente es un blanco fácil en la sustentación.
+`[INFERENCIA]` `fiebre_franca` **no** se condiciona por régimen; `dolor_severo` **sí**, pero mediante **dos
+umbrales**, no mediante presencia o ausencia de bandera. Es principiado: 38.0 °C es una definición clínica
+absoluta independiente del día postoperatorio, mientras que el dolor agudo de los días 1–3 es fisiología
+esperada — `[HECHO]` los verdes tempranos llegan legítimamente a `dolor_nrs = 6`, mientras que en tardío
+`verde_max = 4`. Declarar esto es obligatorio: sin la declaración, la inconsistencia aparente es un blanco
+fácil en la sustentación.
+
+`[HECHO]` **La banda severa no es decidible por el dev set.** El máximo de `dolor_nrs` en temprano es **6**;
+`dolor_nrs >= 7` solo existe en tardío (2 casos, ambos dolor 9, ambos ROJO); la banda {7, 8, 10} no tiene una
+sola observación en ningún régimen. **Cualquier umbral temprano en {7,8,9,10} cuesta cero sobre los 160.**
+
+`[INFERENCIA]` **Dejar la banda sin cubrir no era la opción neutra.** La justificación de más arriba —el
+dolor agudo de los días 1–3 es fisiología esperada— está medida hasta 6 y no dice nada sobre 7–10. Extender
+ese permiso a la banda severa era una decisión activa, tomada con las mismas cero observaciones, solo que
+invisible. Bajo la matriz de costos declarada (§9: `C_FN` ≫ todo; `c₄`/`c₅` son las celdas baratas), con cero
+evidencia la dirección segura es **escalar**.
+
+`[INFERENCIA]` **La asimetría no se rompe: se gradúa.** Sigue siendo cierto que el dolor severo significa
+menos en temprano que en tardío; lo que cambia es que esa diferencia se expresa como dos umbrales y no como
+presencia/ausencia de bandera.
+
+`[ESPECULACIÓN]` **El valor 9.** Se elige sobre 7 porque 7 queda a un punto del techo verde observado en
+temprano (6) y en capa 2 un paciente que redondea al alza se volvería ROJO; 9 deja dos puntos de margen y es
+la única banda severa con observaciones, ambas ROJO (**n = 2, ambas de régimen tardío** — anclaje débil,
+declarado como tal). Entra a la deuda de anclaje al corpus como ítem propio, junto a las cuatro banderas y
+el corte temporal.
+
+`[INFERENCIA]` **Efecto colateral buscado: cierra en su raíz el defecto O1 de `BLOQUEO_2_1.md`.** Con umbral
+indexado, el dolor `AUSENTE` deja la bandera en `DESCONOCIDO` en **ambos** regímenes, en vez de colapsar a
+`FALSO` por `D ∧ F = F` (§1.1). Con eso, la premisa de §8 —«si ninguna bandera está en `DESCONOCIDO`,
+entonces `herida`, `movilidad`, `fiebre_c` y `dolor_nrs` son conocidas»— vuelve a ser verdadera, y la
+demostración de exhaustividad de esa partición se sostiene sin enmienda.
+
+`[INFERENCIA]` **Costo en runtime, declarado.** Un paciente temprano que no informa su dolor y agota el
+presupuesto pasa de AMARILLO a **ROJO**. Se acepta por simetría: hoy un paciente temprano que no describe su
+herida ya sale ROJO por §8, y esa diferencia era un artefacto del `SOLO_TARDIO` filtrándose al mecanismo de
+banderas pendientes, no una decisión clínica.
 
 ### 3.2 Fragilidad declarada del umbral de fiebre
 
@@ -717,6 +753,7 @@ matriz, no se impone** por decreto.
 | Corte del enrutador | día 4 | `[INFERENCIA]` **ancla externa al dataset**: ventana de presentación de la ISQ, más matriz de costos para elegir la dirección del error. No decidible por datos — el dev set no tiene días 4–6 | D6 / A10 |
 | Fiebre franca | ≥ 38.0 °C | `[INFERENCIA]` **ancla externa al dataset**: umbral febril clínico estándar, fijado antes de mirar los datos. El valor **no se barrió sobre la muestra** — es lo que lo distingue de las tres compuertas de abajo, y el argumento más fuerte a su favor | 0 verdes **y** 0 amarillos con ≥ 38.0 en toda la muestra (11 casos, los 11 rojos, 6 pacientes) · A3 / A7 |
 | Dolor severo tardío | ≥ 7 | `[INFERENCIA]` **ancla externa al dataset**: partición NRS estándar, tercil severo 7–10. El valor tampoco se barrió sobre la muestra | D3 / A3 / A4 |
+| Dolor severo **temprano** | ≥ 9 | `[ESPECULACIÓN]` **no hay nada medido que lo fije**: la banda severa no tiene observaciones en temprano (`max = 6`). El valor no se barrió ni se pudo barrer — cualquier umbral en {7,8,9,10} cuesta cero sobre los 160. Se fija por dirección segura bajo §9 y por dejar dos puntos de margen sobre el techo verde observado. **Deuda de anclaje al corpus, ítem propio** | §3.1 / D3 |
 | Purulenta / incapacitante | presencia | `[INFERENCIA]` **promoverlas a Nivel 1 es decisión de diseño**: se conservan por defendibilidad (presencia/ausencia, sin frontera numérica que discutir), **no por cobertura** — D2 mostró que no aportan ninguna | pureza n=3 y n=4; **n efectivo = 3 y 4 pacientes** (sin repetición intra-bandera). Ninguna captura un rojo que la fiebre no capture ya: los 7 casos tienen fiebre ≥ 38.0 (38.1/38.0/38.4 y 38.2/38.0/38.1/38.0) · A1 / A3 |
 | Compuerta `g_fiebre` | ≥ 37.8 °C | `[INFERENCIA]` **primer umbral con cero verdes tardíos en el barrido de A7** (37.7 deja 1, 37.8 deja 0) — selección sobre el dev set, declarada | 0/58 verdes tardíos · A7 |
 | Compuerta `g_dolor` | ≥ 5 | `[INFERENCIA]` **primer entero por encima de `verde_max` tardío = 4** — selección sobre el dev set, declarada | 0/58 verdes tardíos · A7 / A9 |
@@ -728,7 +765,7 @@ matriz, no se impone** por decreto.
 | Tope por señal | 2 | `[ESPECULACIÓN]` pendiente Fase 3 | §7.2 |
 | Tope global | 6 | `[ESPECULACIÓN]` pendiente Fase 3 | §7.2 |
 | Ventana del corpus | 30 días | `[ESPECULACIÓN]` pendiente RAG | §2.1 |
-| Anclas RAG (×4) | PENDIENTE | deuda **bloqueante** | Enmienda, §Deuda |
+| Anclas RAG (×5) | PENDIENTE | deuda **bloqueante**. Las cuatro banderas y el corte temporal de la enmienda, **más el umbral temprano de `dolor_severo`** (§3.1), que se añade el 2026-08-09. La enmienda es registro histórico y no se edita: la lista vigente de la deuda vive en la bitácora | Enmienda, §Deuda · bitácora 2026-08-09 |
 
 ### Nota al pie de §10 — el `[HECHO]` de la columna «Evidencia» no propaga a la columna «Origen»
 
@@ -751,7 +788,7 @@ transferibilidad:**
 
 | Familia | Parámetros | Riesgo de sobreajuste al dev set |
 |---|---|---|
-| **Ancla externa al dataset** — el valor viene de una definición clínica o de una escala estándar, fijada antes de mirar los datos; la muestra solo lo confirma | `fiebre_franca ≥ 38.0`, `dolor_severo ≥ 7`, corte del enrutador en día 4 | **Bajo.** Un contraejemplo en la muestra refutaría el parámetro, pero su ausencia no es lo que lo sostiene |
+| **Ancla externa al dataset** — el valor viene de una definición clínica o de una escala estándar, fijada antes de mirar los datos; la muestra solo lo confirma | `fiebre_franca ≥ 38.0`, `dolor_severo` **tardío** `≥ 7`, corte del enrutador en día 4 | **Bajo.** Un contraejemplo en la muestra refutaría el parámetro, pero su ausencia no es lo que lo sostiene |
 | **Selección sobre el dev set** — el valor se eligió barriendo la muestra hasta encontrar el punto que optimiza un criterio | `g_fiebre ≥ 37.8`, `g_dolor ≥ 5`, `g_constitucional`, señal blanda `dolor ≥ 5`, conteo TARDÍO ≥ 1, conteo TEMPRANO ≥ 2 | **Alto.** El valor **es** el resultado del barrido: no hay evidencia independiente de la que lo produjo |
 
 Esta es la única distinción de la tabla que sobrevive al cambio de muestra. **De las filas etiquetadas

@@ -35,7 +35,7 @@ DATASET_DIR = Path(os.environ.get("DATASET_DIR", "dataset"))
 # --- Parámetros: copiados de parametros_politica.md, único lugar donde viven --- #
 CORTE_ENRUTADOR = 4
 UMBRAL_FIEBRE_FRANCA = 38.0
-UMBRAL_DOLOR_SEVERO = 7
+UMBRAL_DOLOR_SEVERO = {"tardio": 7, "temprano": 9}   # §3, umbral por régimen
 G_FIEBRE = 37.8
 G_DOLOR = 5
 S_FIEBRE = 37.5
@@ -83,7 +83,7 @@ def nivel_1(r: pd.Series | object, regimen: Regimen) -> dict[str, bool]:
         "purulenta": r.herida == "secrecion_purulenta",
         "movilidad_incapacitante": r.movilidad == "incapacitante_nueva",
         "fiebre_franca": r.fiebre_c >= UMBRAL_FIEBRE_FRANCA,
-        "dolor_severo": (r.dolor_nrs >= UMBRAL_DOLOR_SEVERO) and regimen == "tardio",
+        "dolor_severo": r.dolor_nrs >= UMBRAL_DOLOR_SEVERO[regimen],
     }
 
 

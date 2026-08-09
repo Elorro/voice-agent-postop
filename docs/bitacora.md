@@ -523,11 +523,141 @@ sin escribirse.
 
 ---
 
+### 2026-08-09 · Sub-paso 2.1 — el módulo puro existe, y la spec cambió una vez al escribirlo
+
+**Estado: cerrado.** `politica/` implementado, 150 tests en verde, criterio de aceptación reproducido
+exacto. Una corrección de política (O3, abajo) y dos erratas del contrato de 2.1.
+
+#### Qué se entregó
+
+- `[HECHO]` `politica/` = `tipos.py` (HD5) · `parametros.py` (todos los valores, uno por constante
+  nombrada) · `kleene.py` (§1.1, tablas escritas extendidas) · `motor.py` (`decidir()` y los niveles).
+  Librería estándar pura: sin estado, sin I/O, sin voz, sin RAG, sin pandas. Un test lee los `import` del
+  paquete con `ast` y falla si entra cualquier cosa fuera de `{__future__, math, typing, dataclasses,
+  enum, types}`, para que la restricción no dependa de que alguien se acuerde.
+- `[HECHO]` **Criterio de aceptación reproducido sobre los 160**: `recall_rojo = 1.000`, `C_FN = c₁ = c₃ =
+  0`, `c₂ = 11` (4 temprano + 7 tardío), `S1 = 12`, `S2 = 93`, `S3 = 36`, `CIERRE_FORZADO = 19`, los 19
+  forzados de régimen temprano con `n_total == 1` y verde real. Equivalencia **caso a caso** con
+  `scripts/verificacion_hd1.py`: 160/160 en clase y en criterio de cierre.
+- `[INFERENCIA]` El oráculo se importa **solo** en `tests/test_dev_set.py`, nunca desde `politica/`. Si el
+  módulo y su oráculo salieran del mismo código el test no probaría nada; la independencia es el activo.
+- `[INFERENCIA]` **HD5, HD6 y HD7 quedan cerrados como contrato del módulo**, sin tocar
+  `parametros_politica.md`: `Decision` como valor inmutable, orden total de indagación derivado de §7.3, y
+  presupuesto que el módulo **lee y nunca muta** (el llamador cobra; el contrato vive en el docstring de
+  `decidir`).
+- `[INFERENCIA]` **El núcleo se deriva, no se enumera** (§1.2 lo pedía intensional): `NUCLEO` es la unión de
+  las señales que aparecen en los predicados de §3, §4 y §5, calculada en `motor.py`. Si el anclaje al
+  corpus añade o retira un predicado, el conjunto se ajusta solo y no hay una lista que actualizar en otro
+  archivo.
+
+#### Principio nuevo, y es el hallazgo que más lejos llega
+
+> `[INFERENCIA]` **Todo umbral cuya banda crítica no tenga observaciones necesita un test de frontera sobre
+> el dominio declarado, no sobre la muestra.**
+
+- `[HECHO]` Salió de un **mutation testing** sobre `politica/parametros.py`: se muta un parámetro a la vez y
+  se corre la suite completa; el mutante debe morir. De 15 mutantes, 14 murieron y **uno sobrevivió**:
+  `UMBRAL_DOLOR_SEVERO: 7 → 8` no cambia **ni uno** de los 160 casos, porque `dolor_nrs ∈ {7,8}` no existe
+  en el dev set (D3).
+- `[INFERENCIA]` **El dev set no puede custodiar un umbral que vive en una banda que no observó.** El
+  criterio de aceptación —160/160, todos los números exactos— es compatible con mover ese umbral, así que
+  no es red de seguridad ahí. La red tiene que ser una aserción sobre el **dominio declarado** (§1: NRS
+  0–10), que es normativo, y no sobre la muestra, que es contingente.
+- `[INFERENCIA]` **O3 y el mutante superviviente son el mismo defecto visto desde dos lados.** Uno dice «la
+  política decide algo en una banda sin evidencia»; el otro, «los tests no custodian esa decisión». Ambos
+  se apoyan en el mismo hecho: cero observaciones en `{7,8,10}`. Por eso el correctivo es doble —decisión
+  de política (O3) **y** test de frontera— y por eso queda escrito como principio y no como anécdota.
+- `[INFERENCIA]` Emparienta directamente con el correctivo permanente de la enmienda de Fase 1 («toda
+  afirmación de pureza declara su n y su n efectivo»): las dos reglas dicen que **la ausencia de
+  contraejemplo en la muestra no es evidencia**, una para los documentos y otra para los tests.
+- `[HECHO]` Tras añadir `test_frontera_de_cada_umbral` y el test de la banda severa, y tras la decisión de
+  O3, **los 17 mutantes de todos los parámetros mueren**, incluidos los cuatro del umbral de dolor en sus
+  dos regímenes.
+
+#### O3 — DECISIÓN de política: `dolor_severo` pasa a tener umbral por régimen (7 tardío / 9 temprano)
+
+- `[HECHO]` **El defecto detectado al implementar:** `decidir(día 1, dolor_nrs = 9, resto normal)` cerraba
+  en **VERDE por S2, sin indagar**. Sale de aplicar la spec sin desviarse: §3 hacía la bandera
+  `SOLO_TARDIO` (predicado `dolor >= 7 ∧ regimen == TARDIO`) y H3 exige `n_base >= 1` para que `s_dolor`
+  cuente en temprano. El oráculo daba lo mismo, y el dev set no lo detecta porque `dolor_nrs = 9` solo
+  aparece en casos tardíos.
+- `[HECHO]` La banda severa no es decidible por el dev set: máximo de `dolor_nrs` en temprano = **6**;
+  `dolor >= 7` solo existe en tardío (2 casos, ambos dolor 9, ambos ROJO); la banda `{7, 8, 10}` no tiene
+  una sola observación en ningún régimen. **Cualquier umbral temprano en `{7,8,9,10}` cuesta cero sobre los
+  160.**
+- `[INFERENCIA]` **Dejar la banda sin cubrir no era la opción neutra.** La justificación de §3.1 —el dolor
+  agudo de los días 1–3 es fisiología esperada— está medida **hasta 6** y no dice nada sobre 7–10. Extender
+  ese permiso a la banda severa era una decisión activa, tomada con las mismas cero observaciones, solo que
+  invisible. Bajo la matriz de costos (`C_FN` ≫ todo; `c₄`/`c₅` son las baratas), con cero evidencia la
+  dirección segura es escalar.
+- `[INFERENCIA]` **La asimetría de §3.1 no se rompe: se gradúa.** Sigue siendo cierto que el dolor severo
+  significa menos en temprano que en tardío; lo que cambia es que la diferencia se expresa como **dos
+  umbrales** y no como presencia/ausencia de bandera.
+- `[ESPECULACIÓN]` **El valor 9**, sobre 7: el 7 queda a un punto del techo verde observado en temprano (6)
+  y en capa 2 un paciente que redondea al alza se volvería ROJO; el 9 deja dos puntos de margen y es la
+  única banda severa con observaciones, ambas ROJO (**n = 2, ambas tardías** — anclaje débil, declarado).
+- `[INFERENCIA]` **Alternativas descartadas.** (a) *Dejarlo y declararlo*: el permiso seguía sin respaldo y
+  es un blanco directo en la sustentación («¿su agente le dice a un paciente con dolor 9 al día siguiente
+  de operarse que todo está normal?»). (b) *Que `s_dolor` cuente sin acompañamiento en temprano*: no
+  alcanza — lleva el caso a `n_total = 1`, que con el umbral temprano ≥ 2 sigue cerrando VERDE, ahora por
+  cierre forzado en vez de por S2; habría que tocar §5.2 también, deshaciendo la decisión de H4.
+- `[INFERENCIA]` **Costo en runtime, aceptado y declarado:** un paciente temprano que no informa su dolor y
+  agota el presupuesto pasa de AMARILLO a **ROJO**. Se acepta por simetría — un paciente temprano que no
+  describe su herida ya salía ROJO por §8 —, y porque esa diferencia era un artefacto del `SOLO_TARDIO`
+  filtrándose al mecanismo de banderas pendientes, no una decisión clínica.
+- `[HECHO]` **Los números del criterio de aceptación no se mueven.** La salida re-versionada del oráculo
+  difiere de la anterior **solo en la línea de fecha**: cuerpo byte a byte idéntico.
+- **Deuda nueva:** el umbral temprano `9` entra a la deuda de anclaje al corpus como **ítem propio** (ver
+  abajo). La enmienda de Fase 1 no se edita —es registro fechado—: la lista vigente de esa deuda vive aquí.
+
+#### O1 — error del arquitecto: una demostración que contradecía un colapso de Kleene ya derivado
+
+- `[HECHO]` §8 afirmaba: «si ninguna bandera está en `DESCONOCIDO`, entonces `herida`, `movilidad`,
+  `fiebre_c` y `dolor_nrs` son conocidas […] la premisa no hay que verificarla: **se cumple sola**». Era
+  **falso en régimen temprano**: con el predicado `dolor >= 7 ∧ regimen == TARDIO`, el dolor `AUSENTE` daba
+  `D ∧ F = F` por Kleene fuerte (§1.1), o sea bandera **descartada**, no pendiente.
+- `[INFERENCIA]` **La tabla de §8 nunca estuvo mal; lo falso era su justificación.** La resolución del caso
+  es la misma (AMARILLO con `confianza = baja`), así que ninguna salida cambiaba. Por eso el defecto es
+  peligroso: una descripción que envejece mal se nota al leerla, una **demostración** que envejece mal se
+  sigue leyendo bien. Es literalmente el argumento que esta bitácora ya había registrado al prohibir las
+  citas por posición, aplicado ahora a una premisa en vez de a una referencia.
+- `[INFERENCIA]` **Mecanismo del error, para que no se repita:** el arquitecto escribió la demostración de
+  exhaustividad **tres parches después** de haber derivado él mismo el colapso `D ∧ F = F` para la bandera
+  de dolor. El colapso estaba en la spec y la demostración lo contradecía sin citarlo. No fue un descuido
+  de lectura: fue razonar sobre las señales («¿qué puede faltar?») en vez de sobre los predicados («¿qué
+  evalúa cada bandera cuando falta?»), que es exactamente el nivel en el que vive el tercer valor.
+- `[INFERENCIA]` **Resuelto en su raíz por O3**, no por parche: con umbral indexado por régimen, el dolor
+  `AUSENTE` deja la bandera en `DESCONOCIDO` en **ambos** regímenes y la premisa de §8 vuelve a ser
+  verdadera. La tabla no se tocó.
+- `[INFERENCIA]` El módulo **verifica** la premisa en vez de asumirla, y se deja así **por defensa**: es
+  correcta hoy por §3, pero no depende de §3. Si un predicado futuro vuelve a hacer que una bandera colapse
+  a `FALSO` con su señal ausente, ese ramal sigue eligiendo bien sin que nadie tenga que acordarse.
+
+#### O2 — errata de referencia en el contrato de 2.1
+
+- `[HECHO]` El contrato decía que el tercer nivel de prioridad de §7.3 va «en orden de la tabla de §1»,
+  pero la lista literal que daba (`fiebre_c, herida, apetito, sueno, dolor_nrs`) es el orden de **§5.1**.
+  La lista era y sigue siendo lo normativo; la referencia estaba mal. Corregida en el docstring de
+  `ORDEN_DISCRIMINADORES`.
+- `[INFERENCIA]` Sin consecuencia sobre el comportamiento: el implementador siguió la lista, no la
+  referencia. Se registra porque el próximo lector podría hacer lo contrario.
+
+#### Nota de proceso
+
+- `[INFERENCIA]` Los tres hallazgos salieron de **implementar**, no de leer. La auditoría de spec previa a
+  2.1 (HD1–HD4) era necesaria y no fue suficiente: hay defectos que solo aparecen cuando alguien tiene que
+  escribir el `if`. Vale como argumento para la sustentación —el diseño se validó ejecutándolo— y como
+  criterio para el resto de Fase 2: **implementar es un método de auditoría, no solo su consecuencia.**
+
+---
+
 ## Deudas y pendientes abiertos
 
-> **Actualizado 2026-08-08** tras la auditoría de Fase 1. Los dos .docx de diseño quedan **superados por
+> **Actualizado 2026-08-09** tras el cierre de 2.1. Los dos .docx de diseño quedan **superados por
 > `docs/diseno/enmienda_auditoria_fase1.md` en todo punto de conflicto**; los parámetros operativos vigentes
 > están en `docs/diseno/parametros_politica.md`. Ningún valor de política se codifica fuera de ese archivo.
+> **Esta lista es la vigente**: la tabla de deuda de RAG de la enmienda es registro fechado y no se edita,
+> así que los ítems añadidos después del 2026-08-08 existen solo aquí.
 
 - **[BLOQUEANTE · antes de la sesión de evaluación] Anclaje al corpus de las CUATRO banderas y del corte
   temporal.** *(Elevada de «diferida a fase RAG» y ampliada — antes cubría solo la bandera de dolor.)*
@@ -542,6 +672,14 @@ sin escribirse.
   4. (c) Criterios de ISQ para secreción purulenta, y (d) deterioro funcional agudo para movilidad
      incapacitante nueva. Menor urgencia: D2 mostró que ninguna de las dos aporta cobertura que la fiebre
      no dé ya, así que su cita sirve a la defendibilidad, no al recall.
+  5. **(f) Dolor severo en régimen TEMPRANO — umbral 9.** *(Ítem añadido el 2026-08-09 por la decisión O3;
+     no está en la tabla de la enmienda, que es registro fechado.)* Es el **único parámetro del sistema
+     con etiqueta `[ESPECULACIÓN]` en su origen**: la banda severa no tiene ni una observación en régimen
+     temprano (`max = 6`), así que nada medido lo fija y el dev set no puede confirmarlo ni refutarlo.
+     Prioridad **alta pese a ir de quinto**: es el que menos respaldo tiene de los seis, y a diferencia de
+     (e) ni siquiera hay un dato adyacente con el que acotarlo. Si el corpus no dice nada sobre severidad
+     del dolor por día postoperatorio, se sustenta como decisión de matriz de costos y **hay que decirlo
+     así en la sustentación**.
 
   Citarlas en el registro de escalamiento (`citas_RAG`, hoy vacío para las cuatro). Riesgo: si el corpus no
   sustenta (a), la cobertura defendible del Nivel 1 cae a 11/12.

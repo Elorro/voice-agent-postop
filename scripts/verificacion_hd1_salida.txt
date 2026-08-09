@@ -1,5 +1,5 @@
 # verificacion_hd1.py
-# fecha:   2026-08-08T21:27:39-05:00
+# fecha:   2026-08-09T03:09:34-05:00
 # host:    Linux 7.1.3-200.fc44.x86_64 x86_64 / Python 3.14.6
 # dataset: /home/luis/Projects/ParticipantArtifacts/dataset
 # pandas:  3.0.3
