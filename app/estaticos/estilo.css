@@ -57,3 +57,74 @@ h1 { margin: 0 0 .25rem; font-size: 1.9rem; letter-spacing: -.02em; }
 }
 
 .tenue { color: var(--tenue); font-size: .9rem; }
+
+/* --- Añadido en 3.1: consola de llamada y página de métricas ---------------- */
+
+main.ancho { max-width: 56rem; }
+
+h2 { font-size: 1.15rem; margin: 2rem 0 .6rem; }
+
+table { width: 100%; border-collapse: collapse; margin: .5rem 0 1rem; }
+
+th, td {
+  padding: .5rem .7rem;
+  text-align: left;
+  border-bottom: 1px solid var(--borde);
+  vertical-align: top;
+  font-size: .93rem;
+}
+
+th {
+  font-size: .74rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--tenue);
+}
+
+code {
+  background: var(--fondo);
+  border: 1px solid var(--borde);
+  border-radius: 5px;
+  padding: .05rem .3rem;
+  font-size: .88em;
+}
+
+.opcional { font-size: .72rem; color: var(--tenue); font-weight: 400; }
+
+button.boton { border: 0; cursor: pointer; font-size: 1rem; font-family: inherit; }
+button.boton[disabled] { opacity: .45; cursor: not-allowed; }
+button.secundario { background: transparent; color: var(--acento); border: 1px solid var(--borde); }
+
+.estado-linea {
+  margin: 1.2rem 0;
+  padding: .9rem 1.1rem;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  background: var(--fondo);
+  font-weight: 600;
+}
+
+.medidor {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--borde);
+  overflow: hidden;
+  margin: .6rem 0 1rem;
+}
+.medidor > div { height: 100%; width: 0; background: var(--acento); transition: width .06s linear; }
+
+.dialogo { margin: 1rem 0; padding: 0; list-style: none; }
+.dialogo li { padding: .55rem 0; border-bottom: 1px solid var(--borde); font-size: .95rem; }
+.dialogo .quien { display: block; font-size: .72rem; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--tenue); }
+
+.clase { display: inline-block; padding: .15rem .6rem; border-radius: 999px;
+  font-weight: 700; font-size: .8rem; letter-spacing: .04em; }
+.clase-VERDE { background: #e6f4ec; color: #0f7a3d; }
+.clase-AMARILLO { background: #fdf3e0; color: #8a6100; }
+.clase-ROJO { background: #fdecee; color: #a71d2a; }
+
+.campos { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end; }
+.campos label { font-size: .85rem; color: var(--tenue); display: block; }
+.campos input { padding: .5rem .6rem; border-radius: 8px; border: 1px solid var(--borde);
+  background: var(--tarjeta); color: var(--texto); font: inherit; width: 9rem; }

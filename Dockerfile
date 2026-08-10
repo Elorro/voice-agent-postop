@@ -244,6 +244,7 @@ ENV HOME=/opt/cache_modelos \
     INDICE_DIR=./datos/indice \
     SUBIDOS_DIR=./datos/subidos \
     LOGS_DIR=./datos/logs \
+    LLAMADAS_DIR=./datos/llamadas \
     INDICE_SEMILLA_DIR=/opt/indice_base \
     VOCES_DIR=/opt/voces \
     VOZ_MODELO=${VOZ_MODELO}
@@ -252,19 +253,47 @@ COPY --from=constructor /opt/venv /opt/venv
 COPY --from=constructor /opt/cache_modelos /opt/cache_modelos
 COPY --from=constructor /opt/voces /opt/voces
 
+# --- Fonemizador de la voz ----------------------------------------------------
+# El modelo de Piper NO recibe texto: recibe identificadores de fonema, y su
+# `.json` declara `phoneme_type: espeak` con `espeak.voice: es-419`. Es decir,
+# fue entrenado con los fonemas que produce espeak-ng para español
+# latinoamericano; con otro fonemizador los identificadores no significarían lo
+# mismo que en el entrenamiento y la voz saldría en otro idioma imaginario.
+#
+# Se instalan la BIBLIOTECA y los DATOS, no el ejecutable `espeak-ng`: el
+# sintetizador la llama por ctypes (app/audio/tts.py), lo que evita un
+# fork+exec por turno en el camino crítico. Los datos son ~25 MB sin comprimir
+# y no se podan: el diccionario de una lengua no es un archivo por idioma que
+# se pueda recortar a ojo, y el presupuesto de la imagen tiene holgura de sobra.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libespeak-ng1 espeak-ng-data \
+    && rm -rf /var/lib/apt/lists/*
+
 # Punto de montaje de la semilla del índice. Existe vacío a propósito: hoy no
 # hay indexador, y el entrypoint tiene que distinguir "no hay semilla" (arranca
 # vacío) de "la semilla falló" (sería un error).
-RUN mkdir -p /opt/indice_base /app/datos/indice /app/datos/subidos /app/datos/logs
+RUN mkdir -p /opt/indice_base /app/datos/indice /app/datos/subidos /app/datos/logs \
+             /app/datos/llamadas
 
 WORKDIR /app
 COPY app ./app
+# El módulo de decisión clínica. Hasta 3.1 no estaba en la imagen porque nadie
+# lo importaba; ahora `app/dialogo/orquestador.py` lo importa y sin esta línea
+# el contenedor arranca y se cae en el primer turno. Es stdlib pura: no agrega
+# ni una dependencia.
+COPY politica ./politica
+# Tabla de tarifas: ningún precio vive en el código (ver configuracion/tarifas.json).
+COPY configuracion ./configuracion
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 
-# --- Verificación final: los modelos cargan en la imagen que se entrega -------
-# No basta con que cargaran en la etapa constructora: aquí se comprueba que
-# sobrevivieron al COPY y que HOME sigue apuntando al mismo sitio.
+# --- Verificación final: la imagen que se entrega es capaz de dar un turno ----
+# No basta con que los modelos cargaran en la etapa constructora: aquí se
+# comprueba que sobrevivieron al COPY, que HOME sigue apuntando al mismo sitio,
+# y —desde 3.1— que el camino texto -> fonemas -> audio funciona y que la
+# política está dentro de la imagen. Los dos fallos que esto atrapa (la voz sin
+# fonemizador, `politica/` fuera del COPY) se manifestarían, si no, en el primer
+# turno del paciente.
 RUN python - <<'PY'
 import os, pathlib
 assert os.environ["HOME"] == "/opt/cache_modelos"
@@ -278,12 +307,25 @@ from app import salud
 
 cfg = obtener_config()
 assert cfg.ruta_modelo_voz.is_file(), f"falta el modelo de voz: {cfg.ruta_modelo_voz}"
+assert cfg.ruta_tarifas.is_file(), f"falta la tabla de tarifas: {cfg.ruta_tarifas}"
 
 for sonda in (salud.sondear_embedder, salud.sondear_voz):
     c = sonda(cfg)
     print(f"  {c.clave}: {c.estado} — {c.detalle}")
     assert c.estado == "ok", c.detalle
-print("verificación final OK: embedder y voz cargan desde la imagen entregada")
+
+import politica
+d = politica.decidir(politica.Observacion(7, 2, 36.8, "normal", "normal", "normal", "normal"))
+assert (d.clase.name, d.criterio.name) == ("VERDE", "S2"), d
+print(f"  politica: en la imagen, {len(politica.NUCLEO)} señales de núcleo, humo OK")
+
+from app.audio import tts
+sintetizador = tts.obtener_sintetizador(cfg)
+audio = sintetizador.sintetizar("Prueba de voz del seguimiento postoperatorio.")
+assert audio.resultado == "ok" and len(audio.wav) > 10_000, audio
+print(f"  voz: {len(audio.wav)} bytes de WAV, {audio.segundos:.2f} s, en {audio.ms:.0f} ms")
+
+print("verificación final OK: embedder, voz sintetizando y política dentro de la imagen")
 PY
 
 EXPOSE 8080

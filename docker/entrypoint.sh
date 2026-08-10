@@ -27,6 +27,7 @@ INDICE_DIR="${INDICE_DIR:-./datos/indice}"
 INDICE_SEMILLA_DIR="${INDICE_SEMILLA_DIR:-/opt/indice_base}"
 SUBIDOS_DIR="${SUBIDOS_DIR:-./datos/subidos}"
 LOGS_DIR="${LOGS_DIR:-./datos/logs}"
+LLAMADAS_DIR="${LLAMADAS_DIR:-./datos/llamadas}"
 DIRECCION_BIND="${DIRECCION_BIND:-0.0.0.0}"
 PUERTO="${PUERTO:-8080}"
 
@@ -43,7 +44,7 @@ esta_vacio() {
 
 # --- Directorios de datos ----------------------------------------------------
 
-mkdir -p "$INDICE_DIR" "$SUBIDOS_DIR" "$LOGS_DIR"
+mkdir -p "$INDICE_DIR" "$SUBIDOS_DIR" "$LOGS_DIR" "$LLAMADAS_DIR"
 
 # --- Limpieza de un arranque anterior interrumpido ---------------------------
 # Un `.siembra.*` sobreviviente significa que una copia previa se cortó a la

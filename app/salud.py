@@ -97,15 +97,15 @@ def _cargar_embedder() -> Any:
 
 
 def _cargar_voz(cfg: Config) -> Any:
-    import onnxruntime
+    """Devuelve el sintetizador del turno, no una sesión ONNX aparte.
 
-    opciones = onnxruntime.SessionOptions()
-    opciones.log_severity_level = 3
-    return onnxruntime.InferenceSession(
-        str(cfg.ruta_modelo_voz),
-        sess_options=opciones,
-        providers=["CPUExecutionProvider"],
-    )
+    Es el MISMO objeto que usa `app/dialogo/orquestador.py`. Cargar aquí una
+    segunda sesión duplicaría 63 MB en memoria y, peor, permitiría que la
+    página de estado dijera OK sobre una voz distinta de la que habla.
+    """
+    from app.audio import tts
+
+    return tts.obtener_sintetizador(cfg)
 
 
 def _recurso(nombre: str, constructor: Any) -> Any:
@@ -234,11 +234,31 @@ def sondear_voz(cfg: Config) -> Componente:
         except Exception:  # noqa: BLE001 - metadatos, no bloquean
             pass
     try:
-        _recurso("voz", lambda: _cargar_voz(cfg))
+        sintetizador = _recurso("voz", lambda: _cargar_voz(cfg))
+        # El modelo de Piper no recibe texto sino identificadores de fonema, y
+        # los suyos son los de espeak-ng. Comprobar solo que el .onnx carga
+        # dejaría pasar el fallo real —biblioteca de fonemización ausente— hasta
+        # el primer turno del paciente, que es cuando no se puede arreglar.
+        ids, desconocidos = sintetizador.identificadores("prueba de voz")
+        datos["voz_espeak"] = sintetizador.fonemizador.voz
+        datos["fonemas_de_prueba"] = len(ids)
+        if desconocidos:
+            datos["simbolos_desconocidos"] = sorted(set(desconocidos))
         detalle = f"{cfg.modelo_voz} cargado"
         if datos.get("idioma"):
             detalle += f" ({datos['idioma']}, {datos.get('frecuencia_hz')} Hz)"
+        detalle += f"; fonemizador espeak-ng «{sintetizador.fonemizador.voz}» responde"
         return Componente("voz", "Voz (Piper)", "ok", detalle, datos=datos)
+    except OSError as exc:  # la biblioteca de espeak-ng no está en la imagen
+        return Componente(
+            "voz",
+            "Voz (Piper)",
+            "fallo",
+            f"falta el fonemizador ({cfg.voz_biblioteca_espeak}): {exc}. "
+            "La imagen debe instalar libespeak-ng1 y espeak-ng-data "
+            "(ver Dockerfile); sin eso el modelo de voz no recibe entrada",
+            datos=datos,
+        )
     except Exception as exc:  # noqa: BLE001
         return Componente(
             "voz", "Voz (Piper)", "fallo", f"no carga: {exc}", datos=datos
@@ -556,6 +576,7 @@ def sondear_escritura(cfg: Config) -> Componente:
         ("logs", cfg.dir_logs),
         ("subidos", cfg.dir_subidos),
         ("indice", cfg.dir_indice),
+        ("llamadas", cfg.dir_llamadas),
     ):
         datos[etiqueta] = str(ruta)
         try:
@@ -577,7 +598,7 @@ def sondear_escritura(cfg: Config) -> Componente:
         "escritura",
         "Directorios de escritura",
         "ok",
-        "logs, subidos e índice son escribibles",
+        "logs, subidos, índice y llamadas son escribibles",
         datos=datos,
     )
 

@@ -37,12 +37,23 @@ services:
       INDICE_DIR: ./datos/indice
       SUBIDOS_DIR: ./datos/subidos
       LOGS_DIR: ./datos/logs
+      LLAMADAS_DIR: ./datos/llamadas
       INDICE_SEMILLA_DIR: /opt/indice_base
 
     ports:
       # PUERTO del .env es el puerto del HOST. Dentro, el proceso escucha
       # siempre en 8080.
       - "${PUERTO:-8080}:8080"
+
+    # `host.docker.internal` existe de fábrica en Docker Desktop (macOS y
+    # Windows) pero NO en Linux, donde el contenedor no tiene forma de nombrar a
+    # su anfitrión. Esta línea lo iguala en los tres sistemas. Importa porque la
+    # documentación ofrece apuntar LLM_BASE_URL o STT_BASE_URL a un servidor que
+    # el evaluador ya tenga corriendo en su máquina; sin esto, esa instrucción
+    # funcionaría en dos de los tres sistemas y fallaría con «Name or service
+    # not known» en el tercero.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
     volumes:
       # --- Solo lectura: entran por git, no por la imagen ---------------------
@@ -73,6 +84,12 @@ services:
       # `z` por la misma razón que arriba, y aquí es peor: sin él el servicio
       # arranca, responde y no escribe una sola línea al disco del jurado.
       - "${LOGS_HOST_DIR:-./datos/logs}:/app/datos/logs:z"
+
+      # Las llamadas cerradas, una por archivo JSON, por la misma razón: es el
+      # resumen estructurado que el jurado tiene que poder leer sin entrar al
+      # contenedor. Son escrituras únicas y atómicas, sin bloqueos, así que el
+      # bind no trae el problema de SQLite del índice.
+      - "${LLAMADAS_HOST_DIR:-./datos/llamadas}:/app/datos/llamadas:z"
 
     # Mide "el proceso responde", no "el sistema está listo": este healthcheck
     # solo ve el código HTTP, y /salud responde 200 siempre. El veredicto

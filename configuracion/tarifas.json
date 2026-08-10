@@ -1,0 +1,52 @@
+{
+  "_lea_esto_primero": [
+    "Tabla de tarifas del consumo de modelos. NINGÚN precio vive en el código:",
+    "si un modelo no está aquí, el costo de sus turnos se reporta como null y el",
+    "identificador aparece en `modelos_sin_tarifa` de /metricas. Un cero implícito",
+    "sería peor que un hueco declarado: parecería medido.",
+    "Unidades: USD por millón de tokens. Cada entrada trae su fuente y la fecha en",
+    "que se consultó; sin las dos, la entrada no debe existir."
+  ],
+  "moneda": "USD",
+  "unidad": "usd_por_millon_de_tokens",
+  "modelos": {
+    "meta-llama/llama-3.1-70b-instruct": {
+      "entrada": 0.4,
+      "salida": 0.4,
+      "fuente": "https://openrouter.ai/api/v1/models (campo pricing: prompt 0.0000004, completion 0.0000004 USD/token)",
+      "fecha_consulta": "2026-08-09",
+      "nota": "Ruta principal (perfil A) declarada en docs/DECLARACION_MODELO.md."
+    },
+    "meta-llama/llama-3.3-70b-instruct": {
+      "entrada": 0.1,
+      "salida": 0.32,
+      "fuente": "https://openrouter.ai/api/v1/models (campo pricing: prompt 0.0000001, completion 0.00000032 USD/token)",
+      "fecha_consulta": "2026-08-09",
+      "nota": "No es la ruta declarada; se registra porque el proveedor lo sirve y alguien podría configurarlo."
+    },
+    "llama3.2:1b": {
+      "entrada": 0.0,
+      "salida": 0.0,
+      "fuente": "inferencia local (Ollama en el perfil `local` de compose.yaml): no hay proveedor que facture por token",
+      "fecha_consulta": "2026-08-09",
+      "nota": "Cero POR DEFINICIÓN, no por medición. El costo real es de cómputo de la máquina que lo corre y no se contabiliza aquí."
+    },
+    "llama3.2:3b": {
+      "entrada": 0.0,
+      "salida": 0.0,
+      "fuente": "inferencia local (Ollama en el perfil `local` de compose.yaml): no hay proveedor que facture por token",
+      "fecha_consulta": "2026-08-09",
+      "nota": "Misma consideración que llama3.2:1b."
+    }
+  },
+  "transcripcion": {
+    "_nota": [
+      "El STT no factura por token sino por segundo de audio, así que no cabe en",
+      "la tabla de arriba. Queda SIN TARIFA DECLARADA a propósito: no se verificó",
+      "el precio vigente contra el proveedor, y ponerlo de memoria sería inventar",
+      "un número. /metricas reporta los segundos de audio transcritos, que es el",
+      "insumo verificable, y deja el costo en null."
+    ],
+    "modelos": {}
+  }
+}

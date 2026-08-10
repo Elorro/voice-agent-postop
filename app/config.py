@@ -78,11 +78,14 @@ class Config:
     dir_indice_semilla: Path
     dir_subidos: Path
     dir_logs: Path
+    dir_llamadas: Path
+    ruta_tarifas: Path
     coleccion_rag: str
 
     # --- voz ---
     dir_voces: Path
     modelo_voz: str
+    voz_biblioteca_espeak: str
 
     # --- LLM (agnóstico de proveedor) ---
     # El LLM y el STT son SERVICIOS DISTINTOS y se configuran por separado, aun
@@ -100,6 +103,35 @@ class Config:
     stt_base_url: str
     stt_api_key: str
     stt_modelo: str
+    stt_idioma: str
+    stt_timeout_s: float
+
+    # --- turno de voz (sub-paso 3.1) ---
+    # Los dos timeouts son de naturaleza distinta y por eso son dos variables:
+    # el del extractor acota una llamada de la que DEPENDE la decisión (sin
+    # señales la política repregunta a ciegas), el del redactor acota una
+    # llamada de la que NO depende nada (si no llega a tiempo, se emite la
+    # plantilla). Un solo número para ambos obligaría a elegir entre estrangular
+    # la extracción o dejar que la redacción se coma la cola del P95.
+    extractor_timeout_ms: int
+    redactor_timeout_ms: int
+    redactor_activo: bool
+    llm_max_tokens: int
+    max_turnos_llamada: int
+
+    # Rango de plausibilidad de una temperatura DICHA por el paciente. NO es un
+    # umbral clínico —los umbrales viven en politica/parametros.py y solo ahí—:
+    # es el filtro de dominio del extractor, del mismo tipo que el dominio
+    # categórico de `herida`. Fuera de este rango el valor no es una
+    # temperatura humana, y el contrato del extractor manda degradar a AUSENTE
+    # antes que pasar un número plausible pero inventado.
+    fiebre_min_c: float
+    fiebre_max_c: float
+
+    # --- detección de fin de habla en el navegador (el reloj autoritativo) ---
+    vad_umbral_rms: float
+    vad_silencio_ms: int
+    vad_minimo_habla_ms: int
 
     # --- verificación de estado ---
     salud_timeout_s: float
@@ -120,6 +152,16 @@ class Config:
         uno completo.
         """
         return self.dir_indice / "actual"
+
+    @property
+    def ruta_turnos_jsonl(self) -> Path:
+        """El archivo que el jurado abre y del que `/metricas` calcula sus números.
+
+        Es el mismo para las dos cosas a propósito: si la página de métricas
+        leyera un acumulador en memoria, nada impediría que el número mostrado
+        y el registro discreparan, y sería indetectable desde fuera.
+        """
+        return self.dir_logs / "turnos.jsonl"
 
     @property
     def ruta_modelo_voz(self) -> Path:
@@ -158,9 +200,12 @@ def cargar_config() -> Config:
         dir_indice_semilla=_ruta("INDICE_SEMILLA_DIR", "/opt/indice_base"),
         dir_subidos=_ruta("SUBIDOS_DIR", "./datos/subidos"),
         dir_logs=_ruta("LOGS_DIR", "./datos/logs"),
+        dir_llamadas=_ruta("LLAMADAS_DIR", "./datos/llamadas"),
+        ruta_tarifas=_ruta("TARIFAS_RUTA", "./configuracion/tarifas.json"),
         coleccion_rag=_texto("COLECCION_RAG", "corpus_postop"),
         dir_voces=_ruta("VOCES_DIR", "/opt/voces"),
         modelo_voz=_texto("VOZ_MODELO", "es_MX-ald-medium.onnx"),
+        voz_biblioteca_espeak=_texto("VOZ_BIBLIOTECA_ESPEAK", "libespeak-ng.so.1"),
         # Sin default de proveedor ni de modelo: el default es lo que se copia
         # sin leer, y un modelo por defecto que el proveedor apagó es
         # exactamente el fallo que trajo este cambio. Vacío obliga a decidir, y
@@ -175,6 +220,18 @@ def cargar_config() -> Config:
         stt_base_url=_texto("STT_BASE_URL", "https://api.groq.com/openai/v1"),
         stt_api_key=_texto("STT_API_KEY", ""),
         stt_modelo=_texto("STT_MODELO", "whisper-large-v3"),
+        stt_idioma=_texto("STT_IDIOMA", "es"),
+        stt_timeout_s=_flotante("STT_TIMEOUT_S", 12.0),
+        extractor_timeout_ms=_entero("EXTRACTOR_TIMEOUT_MS", 2500),
+        redactor_timeout_ms=_entero("REDACTOR_TIMEOUT_MS", 600),
+        redactor_activo=_booleano("REDACTOR_ACTIVO", True),
+        llm_max_tokens=_entero("LLM_MAX_TOKENS", 220),
+        max_turnos_llamada=_entero("MAX_TURNOS_LLAMADA", 12),
+        fiebre_min_c=_flotante("FIEBRE_MIN_C", 30.0),
+        fiebre_max_c=_flotante("FIEBRE_MAX_C", 45.0),
+        vad_umbral_rms=_flotante("VAD_UMBRAL_RMS", 0.02),
+        vad_silencio_ms=_entero("VAD_SILENCIO_MS", 700),
+        vad_minimo_habla_ms=_entero("VAD_MINIMO_HABLA_MS", 300),
         salud_timeout_s=_flotante("SALUD_TIMEOUT_S", 6.0),
         salud_cache_s=_flotante("SALUD_CACHE_S", 10.0),
         salud_comprobar_red=_booleano("SALUD_COMPROBAR_RED", True),

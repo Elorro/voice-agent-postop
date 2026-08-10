@@ -969,3 +969,108 @@ jurado y tres de ellos son **invisibles desde la máquina del autor**.
   vigila, y eso es parte de la orden de mover, no una consecuencia que el ejecutor deba adivinar. Lo que
   salva el caso es que aquí el fallo **sí es ruidoso**: la compuerta salió 1 en la primera corrida, a
   diferencia de D1 y D3, que solo se cazaban leyendo.
+
+---
+
+## Sub-paso 3.1 — ruta delgada del turno de voz (2026-08-10)
+
+Fase: **prototipo**. Entra el turno de punta a punta; siguen fuera RAG, consola de
+administración y barge-in.
+
+### Lo que se construyó
+
+`audio → STT → EXTRACTOR (LLM #1) → Observacion acumulada → politica.decidir →
+REPREGUNTAR (plantilla [+ REDACTOR, LLM #2]) | CLASIFICAR (guion por clase) → TTS → audio`
+
+Un único `import politica` en todo `app/`, en `app/dialogo/orquestador.py`, con
+test que lo verifica sobre los archivos que git conoce (rastreados **y** no
+ignorados; mirar solo lo rastreado dejaría pasar justo el archivo recién escrito).
+
+### Tres hallazgos que salieron de ejecutar, no de diseñar
+
+- `[HECHO]` **La voz vendorizada no podía hablar.** El `.onnx` de Piper no recibe
+  texto sino identificadores de fonema, y su `.json` declara `phoneme_type: espeak`
+  con `espeak.voice: es-419`. La imagen del esqueleto traía el modelo pero **no**
+  el fonemizador, así que `/salud` decía OK sobre una voz que habría fallado en el
+  primer turno. Se instalan `libespeak-ng1` + `espeak-ng-data` (+19,1 MB
+  comprimidos) y se usa por `ctypes`, no por subproceso. `sondear_voz` ahora
+  fonemiza una frase de prueba: comprobar que el `.onnx` carga no era comprobar
+  nada.
+  `[INFERENCIA]` Cuarta aparición del patrón **«una decisión cambió y su
+  implementación no»**: se eligió la voz en F2 y se vendorizó el modelo, pero la
+  elección arrastraba una dependencia que nadie transcribió al Dockerfile.
+
+- `[HECHO]` **`llama3.2:1b` no cumple el contrato del extractor.** Medido contra
+  el modelo real, no supuesto. Con el prompt inicial devolvía seis `null` incluso
+  ante «la herida la veo normal» (inservible). Al añadir ejemplos empezó a
+  extraer **y a copiar los valores del ejemplo**: ante «el dolor está en seis de
+  diez» anotaba además `apetito: normal` y `sueno: normal`, que nadie dijo. Ese
+  segundo fallo es el peligroso —un valor inventado y plausible cierra la llamada
+  y nadie vuelve a mirar el caso—.
+
+- `[HECHO]` **Se añadió «cita o no cuenta», y no es prompt: es validación.** Cada
+  señal viaja con el fragmento literal que la respalda, y ese fragmento se busca
+  **en la transcripción** (sin tildes, sin puntuación, palabras intactas) antes
+  de aceptar el valor. Un modelo que inventa un valor tiene que inventar la cita,
+  y esa se cae sola. Verificado en vivo: `llama3.2:3b` inventó `apetito` copiando
+  la frase del ejemplo del prompt y el filtro lo descartó. Costo declarado: un
+  modelo que parafrasee la cita pierde una señal que sí estaba — dirección
+  segura, la política repregunta.
+
+### Decisiones que conviene no volver a discutir
+
+- **El reloj autoritativo vive en el navegador.** El servidor no ve la subida ni
+  el arranque de la reproducción; su P50 subestima por construcción. El cliente
+  manda un DELTA, nunca un timestamp. Y `t0` es el último fragmento con voz, no
+  el instante en que el detector decide que hubo silencio: esa ventana es espera
+  real del paciente y regalarla sería maquillar el número.
+- **Una población de medición no se mezcla con otra.** El banco de pruebas
+  headless no puede ver el «primer sample sonando»; su medición se anota con
+  `cliente_origen` y `/metricas` la deja **fuera** del P50/P95 reportado. Un
+  promedio de las dos parecería medido y no lo estaría.
+- **El presupuesto se cobra al EMITIR la pregunta**, no al recibir la respuesta.
+  Si no, un paciente que calla no consume presupuesto y la indagación no termina
+  nunca. Verificado: paciente mudo → exactamente `TOPE_GLOBAL` = 6 preguntas.
+- **El redactor no toca los guiones de cierre.** Ese texto comunica una clase
+  clínica; pasarlo por un modelo sería ponerle la mano encima justo a la frase
+  que le dice al paciente si va a urgencias.
+- **Ningún precio en el código** (`configuracion/tarifas.json`, con fuente y
+  fecha). Modelo sin tarifa declarada → costo `null`, no cero: un cero implícito
+  parecería medido.
+
+### Discrepancia con el enunciado, para que quede registrada
+
+El criterio (d) pedía que el paciente que nunca responde terminara en
+`CIERRE_FORZADO`. Termina en **`AGOTAMIENTO`** (clase ROJO), y es lo correcto:
+§7.4 reserva `CIERRE_FORZADO` para el vector **completo**, y §8 cubre el
+presupuesto agotado con señales AUSENTE. La conversación sí se cierra a la fuerza
+—el sentido coloquial del criterio— pero el `Criterio` que emite el módulo es
+`AGOTAMIENTO`. La política no se tocó.
+
+### Lo verificado, y con qué
+
+| Criterio | Resultado |
+|---|---|
+| `docker compose build --no-cache` + `up -d` → `/salud` LISTO | OK, 7 componentes en verde |
+| Turno completo con audio real (sintetizado con Piper) | OK: 4 turnos, cierre AMARILLO por S3, línea completa en `turnos.jsonl` |
+| `scripts/reejecutar_decisiones.py` | **0**, 5 decisiones reproducidas |
+| Paciente que nunca responde | 6 preguntas = `TOPE_GLOBAL`, cierre ROJO/AGOTAMIENTO, sin cuelgue |
+| Extractor degradado (proveedor caído) | Todas las señales AUSENTE, la política repregunta, turno en 371 ms |
+| Redactor con timeout | `fuente_respuesta: "plantilla"` en los 15 casos observados |
+| `grep -rn "import politica" app/` | 1 |
+| `sh scripts/sin_rutas_absolutas.sh` | 0, sin avisos |
+| `python3 -m pytest tests/ -q` | 232 pasan, 1 skip |
+| Imagen comprimida | 319,3 MB (`docker save … \| wc -c` → 319333376) |
+
+### Deuda que 3.1 deja abierta
+
+- `[HECHO]` **El STT real no se ejercitó.** El `.env` de este repositorio no trae
+  clave del proveedor (`GROQ_API_KEY` estaba **vacía**), así que el camino de
+  transcripción se verificó contra `scripts/stt_de_prueba.py`, que habla el mismo
+  protocolo. Eso valida el cliente HTTP, el multipart y todo lo que viene después;
+  **no** valida la calidad de transcripción de `whisper-large-v3`.
+- `[HECHO]` **La cifra de la rúbrica no está medida.** Solo un navegador puede
+  producirla. Falta una sesión de `/consola` con micrófono.
+- `[ESPECULACIÓN]` La ruta remota (Llama 3.1 70B) no ha ejecutado un turno: sin
+  clave. Con el fallback local en CPU el extractor domina el turno (7–11 s), que
+  es el precio declarado de no depender de nadie.

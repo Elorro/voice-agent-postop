@@ -7,18 +7,28 @@ Agente de voz en español para seguimiento postoperatorio.
 servidos por Groq y Google fueron retirados por sus proveedores. Qué usa esta
 solución y por qué cumple: **[`docs/DECLARACION_MODELO.md`](docs/DECLARACION_MODELO.md)**.
 
-**Correspondencia imagen ↔ repositorio.** La imagen publicada es
+**Correspondencia imagen ↔ repositorio.** La imagen **publicada** en GHCR es
 `ghcr.io/elorro/voice-agent-postop:v0.1.0`, digest
-`sha256:1419829fca3adedf0b01e2052713ce738ed399fe59de482529390e7bf24bb896`.
-Se construyó desde el commit etiquetado `f3-0-cerrada` con el `Dockerfile` de
-este repositorio; `docker compose build` lo reproduce. Verificable con
+`sha256:1419829fca3adedf0b01e2052713ce738ed399fe59de482529390e7bf24bb896`, y
+corresponde al commit etiquetado **`f3-0-cerrada`** — es decir, al esqueleto
+**sin** el turno de voz. Verificable con
 `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.1.0`.
 
-> **Estado: esqueleto levantable.** El contenedor arranca, carga sus modelos y
-> reporta su estado componente por componente en `/salud`. El turno de voz, el
-> STT, el LLM, el RAG y la consola clínica **todavía no están implementados**.
-> Lo que se puede verificar hoy es exactamente eso: que levanta y que dice la
-> verdad sobre sí mismo.
+> **El sub-paso 3.1 todavía no está publicado en GHCR.** Para probar el turno de
+> voz hay que construir localmente (`docker compose build`), que es la ruta
+> alternativa ya documentada en §2. El digest de arriba seguirá describiendo el
+> esqueleto hasta que se vuelva a publicar; decir lo contrario sería afirmar que
+> el jurado descarga algo que todavía no existe.
+
+> **Estado: turno de voz de punta a punta.** El contenedor arranca, carga sus
+> modelos, reporta su estado en `/salud`, y sostiene una llamada completa:
+> audio → transcripción → extracción de señales → **decisión de la política** →
+> respuesta hablada, con una línea por turno en `datos/logs/turnos.jsonl` y
+> `/metricas` calculada leyendo ese mismo archivo.
+>
+> Lo que **todavía no** está, dicho aquí y no en letra pequeña: **RAG** sobre el
+> corpus (el bloque `rag` del registro reporta 0 y `[]` honestamente), **consola
+> de administración clínica** e **interrupción del agente (barge-in)**.
 
 ---
 
@@ -240,6 +250,50 @@ Reinicie con `docker compose up -d` (con `sudo` en Linux) después de tocar `.en
 
 ## 5. Operación
 
+### 5.0 Hacer una llamada
+
+Abra **<http://localhost:8080/consola>**, ponga el día postoperatorio y pulse
+*Iniciar llamada*. El agente saluda y pregunta; cuando termina de hablar se abre
+el micrófono solo. No hay que pulsar nada para responder: el fin de habla lo
+detecta el navegador por energía.
+
+> El micrófono exige un **origen seguro**. `http://localhost` cuenta como tal en
+> todos los navegadores; una IP de red local, no. Si abre la consola desde otra
+> máquina, sírvala por HTTPS o use un túnel. No es algo que la aplicación pueda
+> cambiar.
+
+Endpoints, por si prefiere pegarle a la API:
+
+| Endpoint | Qué hace |
+|---|---|
+| `POST /api/llamada` | Crea la llamada. Devuelve `llamada_id` + audio de apertura |
+| `POST /api/llamada/{id}/turno` | `multipart`: audio + `delta_fin_habla_ms`. Devuelve audio y el payload del turno |
+| `POST /api/llamada/{id}/telemetria` | Beacon del cliente con la latencia real hasta el primer sample sonando |
+| `POST /api/llamada/{id}/cierre` | Resumen estructurado + totales. Idempotente |
+| `GET /metricas` | P50/P95 y consumo, **leyendo `turnos.jsonl`**, no desde memoria |
+
+### 5.0.1 El reloj autoritativo vive en el navegador
+
+La rúbrica mide «desde que el paciente termina de hablar hasta que suena el audio
+del agente». Los dos extremos de ese intervalo son eventos del navegador: el
+servidor no ve la subida, ni la decodificación, ni el arranque de la
+reproducción. Un P50 medido en el servidor **subestima por construcción** el
+número que usted contrasta con su propia percepción.
+
+Por eso el cliente marca `t0` en el fin de habla del VAD y `t1` cuando el primer
+sample suena de verdad, y manda un **delta** en milisegundos —nunca un
+timestamp: comparar el reloj del navegador con el del servidor metería el desfase
+entre las dos máquinas dentro de la métrica—. Los spans del servidor (`stt`,
+`extraccion`, `politica`, `redaccion`, `tts`) van en el registro **como desglose
+explicativo, subordinados a ese número**, no como la cifra reportada.
+
+Dos decisiones de medición que nos perjudican y aun así son las correctas:
+`t0` es el instante del último fragmento con voz, no el instante en que el
+detector decide que hubo silencio (esa ventana es espera real del paciente); y
+`t1` incluye la latencia de salida que declara el propio `AudioContext`.
+
+### 5.0.2 Comandos de uso diario
+
 Comandos de uso diario. **Linux lleva `sudo`; macOS y Windows no.**
 
 | Para | Linux | macOS / Windows |
@@ -251,7 +305,21 @@ Comandos de uso diario. **Linux lleva `sudo`; macOS y Windows no.**
 | Apagar y borrar todo | `sudo docker compose down -v` | `docker compose down -v` |
 
 Los logs también quedan en texto plano en **`datos/logs/app.log`**, legibles con
-cualquier editor y sin `docker cp`.
+cualquier editor y sin `docker cp`. Al lado, **`datos/logs/turnos.jsonl`**: una
+línea por turno con la entrada y la salida de la política, los tokens leídos del
+campo `usage` del proveedor, los spans de latencia y la respuesta emitida. Las
+llamadas cerradas quedan una por archivo en **`datos/llamadas/`**.
+
+Que la entrada y la salida de la política viajen en cada línea es lo que hace la
+decisión **reejecutable**:
+
+```bash
+python3 scripts/reejecutar_decisiones.py datos/logs/turnos.jsonl   # sale 0 si todo coincide
+```
+
+Recorre el registro, vuelve a llamar a `politica.decidir` con la entrada anotada
+y exige igualdad con la salida anotada. Convierte «el agente decidió bien» de una
+afirmación en una verificación.
 
 > En Linux con `sudo`, Docker crea `datos/` como propiedad de `root`. Para leer
 > los logs sin `sudo`: `sudo chown -R "$USER" datos`.
@@ -384,12 +452,20 @@ de aceptabilidad: **nadie ha probado esta voz con pacientes colombianos.**
 
 ### Tests
 
-La suite de `politica/` corre en el host, sin Docker:
+La suite corre en el host, sin Docker y sin red:
 
 ```bash
 pip install --user -r requirements-dev.txt
-python3 -m pytest tests/ -v
+python3 -m pytest tests/ -q      # 232 pasan, 1 skip (sin dataset)
 ```
+
+Cubre `politica/` (143 casos, incluido el dev set completo) y el turno: el
+extractor y sus degradaciones, las plantillas, el registro y las métricas, la
+orquestación con los tres servicios externos sustituidos por dobles, y la
+unicidad del `import politica`. Que los servicios se inyecten
+(`app/contratos.py`) es lo que permite ejercitar sin red las rutas que en
+producción no se pueden provocar a voluntad: extractor devolviendo basura,
+redactor pasándose del timeout, paciente que no contesta nunca.
 
 Con el dataset presente se añade el criterio de aceptación sobre los 160 casos
 del dev set; sin él ese test hace `skip` y el resto corre igual:
@@ -421,15 +497,40 @@ que hoy la compuerta sale limpia, sin avisos.
 ### Estructura
 
 ```
-app/            FastAPI: configuración y verificación de estado. Sin lógica clínica
+app/
+  main.py         FastAPI: portada, consola de llamada, ciclo de vida
+  api.py          Endpoints del turno: /api/llamada… y /metricas
+  salud.py        Verificación de estado componente por componente
+  config.py       Única fuente de rutas y parámetros. Todo por entorno
+  contratos.py    Tipos de frontera (stdlib) entre las piezas del turno
+  registro.py     turnos.jsonl: escritura, relectura y métricas
+  servicios.py    Construcción de STT, LLM y voz, una vez por proceso
+  dialogo/
+    orquestador.py  EL TURNO. Único archivo del árbol que importa politica
+    plantillas.py   Todo lo que el agente dice, escrito a mano
+    estado.py       Llamadas en curso: diccionario en proceso
+  llm/
+    cliente.py      Cliente OpenAI-compatible (remoto o local, mismo código)
+    extractor.py    LLM #1: transcripción → señales de dominio cerrado
+    redactor.py     LLM #2: adapta la repregunta, con timeout duro
+  audio/
+    stt.py          Transcripción contra el proveedor
+    tts.py          Voz local: espeak-ng (fonemas) + Piper (ONNX)
+  estaticos/        consola.js: cliente de voz en JS plano, sin build
 politica/       Decisión clínica. stdlib pura, cerrado y verificado. NO se toca
-tests/          Batería de politica/
-scripts/        Oráculo de verificación y compuertas
+configuracion/  tarifas.json: ningún precio vive en el código
+tests/          Batería de politica/ y del turno
+scripts/        Oráculo, compuertas, reejecución de decisiones y banco de pruebas
 docker/         entrypoint.sh: siembra del índice y arranque
 dataset/        Corpus del reto (107 PDFs) y casos sintéticos. Viaja por git
 docs/           bitacora.md (fuente de verdad del estado), DECLARACION_MODELO.md,
                 diseño, procedencia
 ```
+
+**Un solo `import politica` en todo `app/`, y está en `dialogo/orquestador.py`.**
+No es estética: es lo que hace imposible que otra parte del agente clasifique por
+su cuenta. `tests/test_import_unico_politica.py` falla si aparece un segundo, y
+`grep -rn "import politica" app/` tiene que devolver exactamente una línea.
 
 ---
 
@@ -450,13 +551,32 @@ docs/           bitacora.md (fuente de verdad del estado), DECLARACION_MODELO.md
 
 ### 9.2 Latencia del turno de voz
 
+**Fecha: 2026-08-10. Máquina: Fedora Linux (x86_64), CPU, sin GPU.**
+Configuración medida: **perfil local** (`llama3.2:3b` en Ollama, CPU) y STT
+sustituido por el banco de pruebas (`scripts/stt_de_prueba.py`), porque este
+repositorio no trae clave del proveedor. Los números de abajo describen **esa**
+configuración y ninguna otra.
+
 | Métrica | Valor | Cómo se midió |
 |---|---|---|
-| Latencia extremo a extremo por turno (p50) | PENDIENTE DE MEDICIÓN | |
-| Latencia extremo a extremo por turno (p95) | PENDIENTE DE MEDICIÓN | |
-| Latencia de STT | PENDIENTE DE MEDICIÓN | |
-| Latencia del LLM | PENDIENTE DE MEDICIÓN | |
-| Latencia de síntesis de voz | PENDIENTE DE MEDICIÓN | |
+| **Extremo a extremo, medida por el navegador (p50/p95)** | **PENDIENTE DE MEDICIÓN** | Requiere una sesión de `/consola` con micrófono: es la única forma de ver el «primer sample sonando». El cliente headless **no puede** medirlo y por eso su número se registra aparte, marcado como no comparable |
+| Total del turno en el servidor (p50, llamada completa con 3b) | **8 664 ms** | `GET /metricas`, campo `latencia_ms.servidor_total`, sobre la corrida de 4 turnos |
+| Latencia de STT | 2–31 ms | `latencia_ms.spans.stt`. **Es el banco de pruebas local, no el proveedor**: mide el cliente HTTP y el multipart, no la transcripción real |
+| Latencia del LLM — extractor | 6 849 / 10 659 / 7 597 / 7 474 ms | `latencia_ms.spans.extraccion`, un valor por turno. **Domina el turno entero** |
+| Latencia del LLM — redactor | 600–610 ms, siempre timeout | `latencia_ms.spans.redaccion`. Es el tope duro haciendo su trabajo: cae a plantilla y el turno no se cae |
+| Síntesis de voz (Piper, local) | 368–2 024 ms (p50 761) | `latencia_ms.spans.tts`. En el build: 2,65 s de audio en **264 ms** |
+| Decisión de la política | 0,04–2,3 ms (p50 0,1) | `latencia_ms.spans.politica`. stdlib pura, sin I/O |
+
+**Lectura honesta de estos números:** el turno lo domina el extractor, y el
+extractor aquí es un modelo de 3B corriendo en CPU. Es el precio declarado del
+fallback offline, no el de la ruta principal. La ruta remota (Llama 3.1 70B en un
+proveedor con GPU) **no se ha medido** porque no hay clave en este repositorio, y
+poner ahí un número «esperado» sería inventarlo.
+
+Lo que sí queda demostrado con estos mismos números: **el piso funciona**. Con el
+proveedor de LLM caído, el turno completo tardó **371 ms** (STT 2,1 · extracción
+0,3 · política 0,04 · redacción 0,2 · TTS 368) y el agente siguió preguntando
+desde plantilla.
 
 ### 9.3 Calidad clínica
 
@@ -482,7 +602,8 @@ docs/           bitacora.md (fuente de verdad del estado), DECLARACION_MODELO.md
 
 | Métrica | Valor | Comando |
 |---|---|---|
-| Tamaño de la imagen, comprimida (lo que se descarga) | **300,2 MB** | `docker save ghcr.io/elorro/voice-agent-postop:v0.1.0 \| wc -c` → `300221440` |
+| Tamaño de la imagen del sub-paso 3.1, comprimida | **319,3 MB** | `docker save ghcr.io/elorro/voice-agent-postop:v0.1.0 \| wc -c` → `319335424` (2026-08-10, tras `build --no-cache`) |
+| Tamaño de la imagen publicada en GHCR (esqueleto `f3-0-cerrada`) | **300,2 MB** | `docker save … \| wc -c` → `300221440` (2026-08-09) |
 | Tamaño de la imagen, en disco | 1,02 GB | `docker images ghcr.io/elorro/voice-agent-postop:v0.1.0` |
 | Carga de embedder + voz, sin red | 2,4 s | `docker run --rm --network none …` (ver §10) |
 | Digest de la imagen publicada | `sha256:1419829fca3adedf0b01e2052713ce738ed399fe59de482529390e7bf24bb896` | `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.1.0` |
@@ -490,11 +611,17 @@ docs/           bitacora.md (fuente de verdad del estado), DECLARACION_MODELO.md
 | Visibilidad del paquete | **pública** | Package settings de GHCR, comprobada desde una sesión sin autenticar |
 | Pull anónimo (sin credenciales) | **OK**, digest coincidente | `docker logout ghcr.io && docker pull ghcr.io/elorro/voice-agent-postop:v0.1.0` |
 
-Presupuesto: 400 MB comprimida. Holgura: **~100 MB**.
+Presupuesto: 400 MB comprimida. Holgura con la imagen de 3.1: **~81 MB**.
 
-La medición anterior (2026-08-09, más temprano) daba **280,4 MB**. La diferencia
-son los 19,8 MB de `kubernetes`, cuya desinstalación se revirtió el mismo día
-(§7). El número vigente es el de arriba: describe la imagen que se entrega.
+Los **19,1 MB** que 3.1 añade sobre el esqueleto son, casi enteros, los datos de
+`espeak-ng` (~25 MB sin comprimir). No son opcionales ni recortables a ojo: el
+modelo de Piper no recibe texto sino identificadores de fonema, y los suyos son
+los que produce espeak-ng para `es-419`. Sin esa biblioteca el agente carga la
+voz y no puede hablar; `/salud` lo reporta como FALLO por eso mismo.
+
+La medición de 2026-08-09 más temprana daba **280,4 MB**. La diferencia con los
+300,2 son los 19,8 MB de `kubernetes`, cuya desinstalación se revirtió el mismo
+día (§7).
 
 > **Salvedad sobre el pull anónimo, dicha aquí y no en letra pequeña.** El
 > `docker pull` sin credenciales respondió **«Image is up to date»** porque la
