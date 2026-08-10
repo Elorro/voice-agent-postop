@@ -10,7 +10,7 @@ name: voice-agent-postop
 
 services:
   agente:
-    image: ghcr.io/elorro/voice-agent-postop:v0.1.0
+    image: ghcr.io/elorro/voice-agent-postop:v0.2.0
     # Alternativa documentada a `pull`, para quien no pueda alcanzar ghcr.io:
     #   docker compose build
     build:
@@ -128,7 +128,7 @@ services:
   # `scripts/` no está en la imagen (.dockerignore lo excluye: no hace falta para
   # servir) y por eso entra aquí como montaje.
   indexador:
-    image: ghcr.io/elorro/voice-agent-postop:v0.1.0
+    image: ghcr.io/elorro/voice-agent-postop:v0.2.0
     build:
       context: .
       dockerfile: Dockerfile

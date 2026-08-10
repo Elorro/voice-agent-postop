@@ -340,3 +340,15 @@ mismo camino de código, pero **no se ejecutó**.
 **Qué imagen corresponde a qué commit:** está en el README, cerca del inicio
 («Correspondencia imagen ↔ repositorio»), con el digest y el comando para
 comprobarlo. No se repite aquí a propósito: una sola fuente.
+
+**La etiqueta que sirve esta declaración es `v0.2.0`.** Es la primera imagen que
+contiene el turno de voz, y por tanto la primera en la que los perfiles A, B y C
+de §1 se pueden ejercitar: `v0.1.0` corresponde al esqueleto `f3-0-cerrada`, que
+arranca y responde `/salud` **sin extractor, sin redactor y sin RAG**, de modo
+que ninguna afirmación de este documento sobre latencia, costo o contrato del
+extractor es verificable contra ella.
+
+| | Etiqueta | Digest |
+|---|---|---|
+| Imagen que sirve esta declaración | `ghcr.io/elorro/voice-agent-postop:v0.2.0` | `PENDIENTE_DE_PUBLICAR` — se rellena tras el `docker push` con `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.2.0` |
+| Publicada hoy en GHCR (esqueleto) | `ghcr.io/elorro/voice-agent-postop:v0.1.0` | `sha256:1419829fca3adedf0b01e2052713ce738ed399fe59de482529390e7bf24bb896` |

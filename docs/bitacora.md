@@ -1746,6 +1746,14 @@ correcto era **ROJO por S1**.
   real** (`{error: 29, timeout: 4, json_invalido: 4}`). Ese número es la medida
   de cuánto de lo registrado hasta hoy está contaminado por cuota, no por
   pacientes.
+
+  > **ERRATA — el mensaje del commit de F3.7 dice «34 de 84»; el número correcto
+  > es 33.** `turnos_sin_llm_real` suma `error` (29) y `timeout` (4); los 4
+  > `json_invalido` **no** entran, porque ahí el modelo SÍ respondió y ese turno
+  > sí cobra presupuesto — es la línea que separa las dos poblaciones y sumarlas
+  > destruye justo lo que el campo mide. El mensaje del commit no se reescribe
+  > (el historial es registro); esta bitácora, el código y `/metricas` dicen 33.
+  > **Para el informe y el video, el número es 33.**
 - `[HECHO]` **`AGOTAMIENTO` ya no se puede leer solo.** Un cierre por agotamiento
   con `turnos_sin_llm_real > 0` no significa lo mismo que uno limpio, y ahora eso
   se ve sin ir a buscarlo al log.
@@ -2369,3 +2377,129 @@ de F3.6 y respuestas naturales de dolor y fiebre—:
   dominio («normal, enrojecida, o con pus»), que es información necesaria y a la
   vez un guion que un paciente confundido puede repetir. No se ha medido si eso
   ocurre.
+
+---
+
+## F3.11 — v0.2.0 preparada: lo publicado en GHCR era el esqueleto
+
+**Hallazgo crítico para G2, G4 y G5 a la vez.** `compose.yaml` apuntaba a
+`ghcr.io/elorro/voice-agent-postop:v0.1.0`, y esa imagen **no se ha vuelto a
+empujar desde `f3-0-cerrada`**: es el esqueleto **sin turno de voz, sin RAG y
+sin consola**. Un `docker compose pull` del jurado levantaba eso. El README ya lo
+decía en un aviso, pero el aviso no arregla la compuerta: G2 mide que el sistema
+levante, G4 la llamada y G5 la consola, y las tres caen con la misma descarga.
+
+### Lo preparado
+
+- `[HECHO]` **`compose.yaml` → `:v0.2.0`**, en las dos referencias (servicio
+  `agente` y perfil `herramientas`/`indexador`, que comparten imagen a propósito
+  para que el índice se construya con el mismo embedder que lo consulta).
+- `[HECHO]` **Imagen construida con `--no-cache` y verificada.**
+
+  | | Valor | Comando |
+  |---|---|---|
+  | Comprimida | **326,0 MB** (`326009344`) | `docker save …:v0.2.0 \| wc -c` |
+  | En disco | **1,11 GB** | `docker images` |
+  | Contenido | **40 archivos**, `diff` vacío contra el árbol | `find app politica configuracion -type f` dentro y fuera |
+  | `indice_base/` dentro | **0 entradas** | sigue excluido por `.dockerignore` |
+  | Arranque sin red | **2,98 s**, embedder y voz OK | `docker run --network none …` |
+
+  Presupuesto 400 MB: holgura **~74 MB**. Los 18 kB que separan v0.2.0 de la
+  medición de 3.2 son código; el peso lo ponen los modelos vendorizados.
+- `[PENDIENTE — LO HACE LUIS]` **El `docker push` y el digest.** Comandos:
+
+  ```bash
+  docker push ghcr.io/elorro/voice-agent-postop:v0.2.0
+  docker inspect --format='{{index .RepoDigests 0}}' \
+    ghcr.io/elorro/voice-agent-postop:v0.2.0
+  ```
+
+  **Dónde va el digest que salga**, tres sitios y el marcador es
+  `PENDIENTE_DE_PUBLICAR`:
+
+  | Archivo | Dónde |
+  |---|---|
+  | `README.md` | §«Correspondencia imagen ↔ repositorio», bloque de código del inicio |
+  | `README.md` | §9.5, filas «Digest de `v0.2.0`» y «Push de `v0.2.0` a GHCR» |
+  | `docs/DECLARACION_MODELO.md` | final de §5, tabla de etiquetas |
+
+  Falta además comprobar el **pull anónimo** (`docker logout ghcr.io && docker
+  pull …:v0.2.0`) y que el paquete siga **público**: con v0.1.0 el paquete nació
+  privado y el fallo se descubrió tarde.
+- `[HECHO]` **Mientras no se empuje, el README dice que un `pull` fallará con
+  `manifest unknown`**, y por qué eso es preferible a descargar en silencio algo
+  sin turno de voz.
+
+### El COPY, verificado — y ahora lo verifica el build
+
+- `[HECHO]` **El `Dockerfile` sí copiaba todo**: `COPY app ./app` arrastra
+  `rag/`, `llm/`, `audio/`, `dialogo/` y `estaticos/`, y `.dockerignore` no
+  excluye nada dentro de `app/`. Comprobado por `diff` de los 40 archivos.
+- `[HECHO]` **Pero nadie lo comprobaba en el build, y ese es el fallo que dejó
+  publicado el esqueleto.** La verificación final ya cargaba embedder, voz y
+  `politica`; ahora además importa `app.main`, exige las **12 rutas** del
+  esquema OpenAPI (incluidas `/salud`, `/llamada`, `/consola`, `/metricas`,
+  `/api/llamada/{id}/turno` y `/api/documentos`), comprueba los **tres
+  estáticos** archivo a archivo e importa `rag/`, `llm/` y `audio/`. Una imagen
+  sin turno de voz ya no se puede construir.
+- `[CORRECCIÓN]` **El primer intento de esa verificación falló y el fallo era
+  mío, no de la imagen.** Recorría `aplicacion.routes` buscando `/salud` y no lo
+  encontraba: desde FastAPI 0.141 un `include_router` aparece ahí como un
+  `_IncludedRouter` sin `path`, así que esa lista solo muestra las rutas
+  declaradas inline. Se lee del esquema OpenAPI, que las aplana. Queda anotado
+  porque el error tenía toda la pinta de ser un COPY incompleto.
+- `[CORRECCIÓN]` **Los estáticos se comprueban archivo a archivo, no por el
+  montaje.** `crear_app` hace `DIR_ESTATICOS.mkdir(exist_ok=True)`: un directorio
+  ausente se crearía vacío en silencio y la página cargaría sin su JavaScript.
+
+### README §9.2 — la latencia por navegador deja de estar PENDIENTE
+
+- `[HECHO]` **P50 4 827 ms / P95 8 426 ms sobre n = 16 turnos limpios**, perfil A.
+  Desglosado por modelo: `models/gemini-3.6-flash` 4 943 / 10 880 (n = 8) y
+  `models/gemini-3.5-flash-lite` 4 470 / 8 426 (n = 8).
+- `[HECHO]` **El filtro está escrito y es la mitad del valor del número.** De 46
+  turnos con `cliente_origen: navegador` quedan 16. Se excluyen: **8 aperturas**
+  (no hay fin de habla del paciente); **15 turnos del perfil C roto** de F3.9,
+  que son los MÁS RÁPIDOS (1,9-3,3 s) porque el extractor devolvía 400 y nunca
+  corría —incluirlos habría mejorado el P50 midiendo un sistema que no
+  clasificaba—; y **7 turnos** con 429, timeout o STT caído.
+- `[HECHO]` **Con n = 16 el P95 es el segundo peor valor observado**, no una cola
+  estimada, y la serie ordenada completa va escrita en el README para que nadie
+  tenga que fiarse del percentil.
+- `[HECHO]` **El máximo (10 880 ms) no fue el modelo: fue el STT**, con un span de
+  6 777 ms en el primer turno de la primera llamada por navegador. El resto de
+  turnos limpios tienen STT entre 475 y 1 374 ms.
+- `[HECHO]` **La brecha que solo ve el navegador es de ~827 ms de mediana**
+  (cliente 4 827 contra servidor 4 000 sobre los mismos turnos). Es la
+  justificación empírica de §5.0.1: medir en el servidor subestima por
+  construcción.
+- `[HECHO]` **Declarado que el evaluador NO puede recalcularlo desde un clon
+  limpio:** `datos/` está en `.gitignore` y `turnos.jsonl` no viaja. Los 16
+  turnos salen de 5 llamadas nombradas por id, repartidas en dos clones de esta
+  máquina; con solo el log del clon de desarrollo (n = 10) el resultado es
+  P50 4 470 / P95 10 880. El README lo dice con esas palabras.
+
+### Errata del mensaje de commit de F3.7
+
+- `[HECHO]` **Dice «34 de 84» y el correcto es 33.** `turnos_sin_llm_real` suma
+  `error` (29) y `timeout` (4); los 4 `json_invalido` van aparte porque ahí el
+  modelo SÍ respondió y ese turno **sí cobra** presupuesto. Sumarlos destruye la
+  distinción que el campo existe para medir.
+- `[HECHO]` **Fuera del historial de git el número ya estaba bien:** la única
+  aparición es la entrada de F3.7 de esta bitácora, que dice 33 con su desglose.
+  Se añadió allí una **ERRATA** explícita para que el informe y el vídeo no
+  reutilicen el 34 del mensaje del commit. El mensaje no se reescribe: el
+  historial es registro.
+
+### Deuda que este cambio deja abierta
+
+- `[PENDIENTE]` **El push, el digest, el pull anónimo y la visibilidad pública**
+  del paquete `v0.2.0`. Hasta entonces G2 sigue rota para quien use `pull`.
+- `[ESPECULACIÓN]` **La imagen no se ha probado arrancando desde el `pull`.** Se
+  verificó construida en local; `docker load` de un `docker save` no es lo mismo
+  que un pull desde el registro, y el fallo de v0.1.0 (paquete privado) estuvo
+  justamente en el registro, no en la imagen.
+- `[HECHO]` **§9.1 (levantamiento) sigue sin números** y no puede tenerlos hasta
+  que exista una etiqueta publicada que descargar. La corrida de cronometraje de
+  F3.10 quedó invalidada por el caché local; la nueva necesita, además de
+  `docker image rm`, que el `pull` tenga algo que traer.

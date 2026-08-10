@@ -7,18 +7,26 @@ Agente de voz en español para seguimiento postoperatorio.
 servidos por Groq y Google fueron retirados por sus proveedores. Qué usa esta
 solución y por qué cumple: **[`docs/DECLARACION_MODELO.md`](docs/DECLARACION_MODELO.md)**.
 
-**Correspondencia imagen ↔ repositorio.** La imagen **publicada** en GHCR es
-`ghcr.io/elorro/voice-agent-postop:v0.1.0`, digest
-`sha256:1419829fca3adedf0b01e2052713ce738ed399fe59de482529390e7bf24bb896`, y
-corresponde al commit etiquetado **`f3-0-cerrada`** — es decir, al esqueleto
-**sin** el turno de voz. Verificable con
-`docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.1.0`.
+**Correspondencia imagen ↔ repositorio.** `compose.yaml` apunta a
+`ghcr.io/elorro/voice-agent-postop:**v0.2.0**`, que es la imagen con el turno de
+voz, el RAG y la consola. Digest:
 
-> **El sub-paso 3.1 todavía no está publicado en GHCR.** Para probar el turno de
-> voz hay que construir localmente (`docker compose build`), que es la ruta
-> alternativa ya documentada en §2. El digest de arriba seguirá describiendo el
-> esqueleto hasta que se vuelva a publicar; decir lo contrario sería afirmar que
-> el jurado descarga algo que todavía no existe.
+```
+PENDIENTE_DE_PUBLICAR — se rellena tras el push, con:
+docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.2.0
+```
+
+| | Etiqueta | Qué contiene | Estado |
+|---|---|---|---|
+| **v0.2.0** | `:v0.2.0` | Turno de voz, RAG con citas, consola de administración | **Construida y verificada localmente; falta el `docker push`** |
+| v0.1.0 | `:v0.1.0` | Esqueleto del commit `f3-0-cerrada`, **sin** turno de voz, **sin** RAG y **sin** consola | Publicada, digest `sha256:1419829fca3adedf0b01e2052713ce738ed399fe59de482529390e7bf24bb896` |
+
+> **⚠️ Hasta que se ejecute el `docker push`, lo publicado en GHCR sigue siendo
+> v0.1.0 —el esqueleto—.** Un `docker compose pull` con este `compose.yaml`
+> fallará con `manifest unknown` mientras la etiqueta no exista, que es
+> preferible a descargar en silencio algo que no tiene turno de voz. Para probar
+> mientras tanto: `docker compose build` (§2). Decir aquí que el jurado ya puede
+> descargar v0.2.0 sería afirmar que existe algo que todavía no se ha empujado.
 
 > **Estado: turno de voz de punta a punta, RAG con citas y consola de
 > administración.** El contenedor arranca, carga sus modelos, reporta su estado
@@ -877,7 +885,7 @@ configuración y ninguna otra.
 
 | Métrica | Valor | Cómo se midió |
 |---|---|---|
-| **Extremo a extremo, medida por el navegador (p50/p95)** | **PENDIENTE DE MEDICIÓN** | Requiere una sesión de `/consola` con micrófono: es la única forma de ver el «primer sample sonando». El cliente headless **no puede** medirlo y por eso su número se registra aparte, marcado como no comparable |
+| **Extremo a extremo, medida por el navegador (P50/P95)** | **4 827 / 8 426 ms** (n = 16) | **Medido. Está en §9.2.1**, con el procedimiento, el filtro y lo que el número no cubre |
 | Total del turno en el servidor (p50, llamada completa con 3b) | **8 664 ms** | `GET /metricas`, campo `latencia_ms.servidor_total`, sobre la corrida de 4 turnos |
 | Latencia de STT | 2–31 ms | `latencia_ms.spans.stt`. **Es el banco de pruebas local, no el proveedor**: mide el cliente HTTP y el multipart, no la transcripción real |
 | Latencia del LLM — extractor | 6 849 / 10 659 / 7 597 / 7 474 ms | `latencia_ms.spans.extraccion`, un valor por turno. **Domina el turno entero** |
@@ -888,6 +896,83 @@ configuración y ninguna otra.
 **Lectura honesta de estos números:** el turno lo domina el extractor, y el
 extractor aquí es un modelo de 3B corriendo en CPU. Es el precio declarado del
 fallback offline, no el de la ruta principal.
+
+#### 9.2.1 La medición que pide la rúbrica: navegador, micrófono real
+
+**Es el único número comparable con lo que percibe el evaluador**, porque los dos
+extremos del intervalo —fin de habla del paciente y primer sample sonando— son
+eventos del navegador (§5.0.1). Fecha: **2026-08-10**. Fuente: `turnos.jsonl`,
+campo `latencia_ms.cliente_fin_habla_a_audio` con
+`latencia_ms.cliente_origen == "navegador"`.
+
+| | P50 | P95 | n |
+|---|---|---|---|
+| **Perfil A, agregado** | **4 827 ms** | **8 426 ms** | **16** |
+| `models/gemini-3.6-flash` (el activo) | 4 943 ms | 10 880 ms | 8 |
+| `models/gemini-3.5-flash-lite` | 4 470 ms | 8 426 ms | 8 |
+
+Recalculable sobre el registro, sin ejecutar el sistema. Recibe uno o varios
+`turnos.jsonl`:
+
+```bash
+python3 - datos/logs/turnos.jsonl [otros...] <<'EOF'
+import json, sys
+xs = []
+for ruta in sys.argv[1:]:
+    for l in open(ruta):
+        d = json.loads(l)
+        lat = d.get("latencia_ms") or {}
+        inv = d.get("llm") or []
+        if (d.get("tipo") == "turno" and lat.get("cliente_origen") == "navegador"
+                and d.get("stt", {}).get("resultado") == "ok"
+                and d.get("extraccion", {}).get("resultado") == "ok"
+                and inv and all(i["resultado"] == "ok" for i in inv)):
+            xs.append(lat["cliente_fin_habla_a_audio"])
+xs.sort()
+p = lambda q: xs[min(len(xs) - 1, round(q * (len(xs) - 1)))]
+print(f"n={len(xs)}  P50={p(.50):.0f}  P95={p(.95):.0f}")
+EOF
+```
+
+> **De dónde salen los 16 turnos, dicho aquí porque el evaluador NO puede
+> recalcularlo desde un clon nuevo.** `datos/` está en `.gitignore`, así que
+> `turnos.jsonl` **no viaja en el repositorio**: estos números son auditables en
+> la máquina donde se corrieron, no desde una descarga limpia.
+>
+> Son **5 llamadas por navegador**, repartidas en dos clones de la misma
+> máquina: `1767a9d8174a`, `c50e671845a8`, `6aefc5bac23f` y `48561cec1545` en el
+> clon de desarrollo, y `41d8feedea93` en el clon del usuario limpio. Con **solo
+> el log de desarrollo** (n = 10) salen **P50 4 470 / P95 10 880 ms**; la
+> diferencia con el agregado es qué llamadas entran, no otra forma de calcular.
+
+**Qué se excluye, y por qué cada exclusión (46 turnos de navegador → 16):**
+
+| Excluido | Cuántos | Motivo |
+|---|---|---|
+| Aperturas | 8 | No hay «fin de habla del paciente»: el saludo no responde a nada. Su reloj arranca en otro sitio y promediarlo bajaría el número sin medir lo que la rúbrica define (1 299–1 766 ms, para quien quiera el dato) |
+| Turnos con el LLM devolviendo `400` en todos | 15 | Corridas del perfil C durante el fallo de F3.9. Son **rápidos (1,9–3,3 s) porque el extractor nunca corrió**: incluirlos mejoraría el P50 midiendo un sistema que no clasificaba |
+| Turnos con `429`, timeout o STT caído | 7 | Miden la cuota del proveedor, no el sistema (F3.6, F3.10) |
+
+**Lo que este número no dice, y hay que decirlo antes de usarlo en el vídeo:**
+
+- **Con n = 16, el P95 es el segundo peor valor observado**, no una cola
+  estimada. La serie ordenada completa es: 3 374 · 3 416 · 3 656 · 3 825 ·
+  4 052 · 4 112 · 4 470 · 4 532 · **4 827** · 4 878 · 4 932 · 4 943 · 5 160 ·
+  6 024 · **8 426** · 10 880 ms.
+- **El máximo (10 880 ms) no fue el modelo:** fue el STT, con un span de
+  **6 777 ms** en el primer turno de la primera llamada por navegador
+  (`1767a9d8174a`). Los demás turnos limpios tienen STT entre 475 y 1 374 ms.
+- **Son 5 llamadas de una sola máquina y una sola red**, con dos modelos
+  distintos del mismo proveedor. No es una muestra de rendimiento en la máquina
+  del evaluador.
+
+Desglose del servidor sobre **esos mismos 16 turnos** (P50 / P95, en ms):
+STT 874 / 1 374 · extractor 1 548 / 2 460 · política **0,1 / 0,2** ·
+redactor 1 126 / 1 433 · TTS 467 / 973. El `servidor_total` de los mismos turnos
+es **P50 4 000 / P95 7 593**, así que **la brecha que solo ve el navegador
+—subida del audio, decodificación y arranque de la reproducción— es de unos
+827 ms de mediana**. Esa brecha es exactamente la razón por la que el número
+autoritativo no se mide en el servidor.
 
 #### El perfil A, ya medido (2026-08-10)
 
@@ -1014,6 +1099,11 @@ Fecha: **2026-08-10**. Detalle completo, con los comandos:
 
 | Métrica | Valor | Comando |
 |---|---|---|
+| **Tamaño de `v0.2.0`, comprimida** | **326,0 MB** | `docker save ghcr.io/elorro/voice-agent-postop:v0.2.0 \| wc -c` → `326009344` (**2026-08-10**, tras `docker build --no-cache`) |
+| **`v0.2.0` en disco** | **1,11 GB** | `docker images ghcr.io/elorro/voice-agent-postop` |
+| **Contenido de `v0.2.0`** | **40 archivos**, idénticos al árbol | `docker run --rm --entrypoint sh … -c 'cd /app && find app politica configuracion -type f'` contra el mismo `find` del repositorio: `diff` vacío |
+| **Digest de `v0.2.0`** | **PENDIENTE_DE_PUBLICAR** | Se rellena tras el push: `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.2.0` |
+| **Push de `v0.2.0` a GHCR** | **PENDIENTE** | `docker push ghcr.io/elorro/voice-agent-postop:v0.2.0` |
 | Tamaño de la imagen del sub-paso 3.2, comprimida | **326,0 MB** | `docker save ghcr.io/elorro/voice-agent-postop:v0.1.0 \| wc -c` → `325991424` (2026-08-10) |
 | `indice_base/` dentro de la imagen | **0 entradas** (excluido) | `docker run --rm … sh -c 'ls -A /opt/indice_base \| wc -l'` → `0`; `/app` solo trae `app configuracion datos politica` |
 | Tamaño de la imagen del sub-paso 3.1, comprimida | **319,3 MB** | `docker save … \| wc -c` → `319335424` (2026-08-10, tras `build --no-cache`) |
@@ -1025,7 +1115,14 @@ Fecha: **2026-08-10**. Detalle completo, con los comandos:
 | Visibilidad del paquete | **pública** | Package settings de GHCR, comprobada desde una sesión sin autenticar |
 | Pull anónimo (sin credenciales) | **OK**, digest coincidente | `docker logout ghcr.io && docker pull ghcr.io/elorro/voice-agent-postop:v0.1.0` |
 
-Presupuesto: 400 MB comprimida. Holgura con la imagen de 3.2: **~74 MB**.
+Presupuesto: 400 MB comprimida. Holgura con `v0.2.0`: **~74 MB**.
+
+Las filas de `v0.1.0` se conservan porque describen lo que hoy sigue publicado en
+GHCR, y porque la diferencia entre las dos etiquetas es el argumento de por qué
+había que republicar: **v0.1.0 arranca, responde `/salud` y no tiene turno de
+voz.** Los 18 kB de diferencia entre 326 009 344 y 325 991 424 son el código
+añadido desde entonces; el peso lo ponen los modelos vendorizados, que no
+cambiaron.
 
 Los **6,7 MB** que 3.2 añade sobre 3.1 son `pypdf` (0,4 MB) y `cryptography` con
 sus dos transitivas (~5 MB). La segunda entró por una medición: sin ella un
@@ -1070,7 +1167,7 @@ día (§7).
 Para comprobar que la imagen no necesita red después de instalada:
 
 ```bash
-docker run --rm --network none ghcr.io/elorro/voice-agent-postop:v0.1.0 \
+docker run --rm --network none ghcr.io/elorro/voice-agent-postop:v0.2.0 \
   python -c "from app.config import obtener_config; from app import salud; \
 cfg=obtener_config(); print(salud.sondear_embedder(cfg).detalle, '|', salud.sondear_voz(cfg).detalle)"
 ```

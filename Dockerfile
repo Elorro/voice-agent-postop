@@ -319,6 +319,36 @@ d = politica.decidir(politica.Observacion(7, 2, 36.8, "normal", "normal", "norma
 assert (d.clase.name, d.criterio.name) == ("VERDE", "S2"), d
 print(f"  politica: en la imagen, {len(politica.NUCLEO)} señales de núcleo, humo OK")
 
+# --- Que el COPY no se haya dejado nada ---------------------------------------
+# Importar `app.main` construye la aplicación entera: arrastra api,
+# api_documentos, dialogo/, llm/, rag/ y audio/. Sin esto, un COPY incompleto se
+# descubre en la máquina del evaluador — que es exactamente lo que pasó: la
+# imagen v0.1.0 publicada en GHCR corresponde al esqueleto `f3-0-cerrada` y
+# arranca perfectamente **sin turno de voz, sin RAG y sin consola**.
+#
+# Los estáticos se comprueban archivo a archivo y no por el montaje: `crear_app`
+# hace `DIR_ESTATICOS.mkdir(exist_ok=True)`, así que un directorio ausente se
+# crearía vacío en silencio y la página cargaría sin su JavaScript.
+from app.main import app as aplicacion
+
+# Las rutas se leen del esquema OpenAPI, no de `aplicacion.routes`: desde
+# FastAPI 0.141 un `include_router` aparece ahí como un `_IncludedRouter` sin
+# `path`, así que recorrer esa lista NO ve /salud, /metricas ni /api/*. El
+# esquema es API pública y aplana los routers.
+rutas = set(aplicacion.openapi()["paths"])
+for ruta in ("/salud", "/llamada", "/consola", "/metricas",
+             "/api/llamada", "/api/llamada/{llamada_id}/turno", "/api/documentos"):
+    assert ruta in rutas, f"falta la ruta {ruta} en la imagen; rutas={sorted(rutas)}"
+
+from app.main import DIR_ESTATICOS
+for nombre in ("consola.js", "administracion.js", "estilo.css"):
+    assert (DIR_ESTATICOS / nombre).is_file(), f"falta el estático {nombre}"
+
+import app.rag.indice, app.rag.recuperacion, app.rag.respuesta, app.rag.lexico
+import app.llm.cliente, app.llm.extractor, app.llm.redactor
+import app.audio.stt, app.audio.tts
+print(f"  app: {len(rutas)} rutas montadas, estáticos presentes, rag/llm/audio importables")
+
 from app.audio import tts
 sintetizador = tts.obtener_sintetizador(cfg)
 audio = sintetizador.sintetizar("Prueba de voz del seguimiento postoperatorio.")
