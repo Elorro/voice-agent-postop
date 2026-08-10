@@ -172,6 +172,22 @@ una fila por componente.
 | **LISTO** | Todos los componentes bloqueantes respondieron | Nada. Listo. |
 | **NO LISTO** | Al menos uno falló | Lea la fila en rojo: dice cuál y por qué |
 
+> **Si la fila en rojo es la del LLM, recargue la página una vez antes de dar
+> nada por roto.** La sonda del LLM sale a internet, y una petición que no vuelve
+> es indistinguible de un proveedor caído mirando un solo intento. Medido sobre
+> `datos/logs/app.log` del 2026-08-10: **12 de 456 comprobaciones (2,6 %)** no
+> obtuvieron respuesta del proveedor y la siguiente, 30 s después, sí — sin tocar
+> nada. El detalle de la fila dice cuál de los dos casos es:
+>
+> | Lo que empieza diciendo el detalle | Qué hacer |
+> |---|---|
+> | `no se pudo verificar ahora: …` | **Recargue.** Fue un timeout, un 429 o un 5xx del proveedor. No dice nada sobre su configuración |
+> | `el proveedor respondió y NO sirve «…»` | Recargar **no** lo arregla: corrija `LLM_MODELO` en `.env` (§4) |
+> | `el proveedor rechaza la clave (HTTP 401)` | Revise `LLM_API_KEY` (§4) |
+>
+> En JSON el mismo dato viaja sin interpretar frases, en `componentes[].datos.diagnostico`:
+> `transitorio`, `modelo_inexistente`, `clave`, `servidor_local_caido` u `ok`.
+
 Lo que debe ver hoy, con la clave puesta:
 
 | Componente | Estado esperado | Detalle |
@@ -362,7 +378,8 @@ Reinicie con `docker compose up -d` (con `sudo` en Linux) después de tocar `.en
 |---|---|
 | `LLM_MODELO está vacío…` | No puso el identificador del modelo. El mensaje trae el valor exacto que va en cada perfil |
 | `el proveedor rechaza la clave (HTTP 401)` | La clave llegó pero no es válida: sobra un espacio, falta un carácter, o está revocada |
-| `el proveedor no sirve «…»; modelos disponibles que coinciden: …` | La clave está bien y el modelo no existe en ese proveedor. Copie uno de los que lista |
+| `el proveedor respondió y NO sirve «…»; … modelos disponibles que coinciden: …` | La clave está bien y el modelo no existe en ese proveedor. Copie uno de los que lista. **Recargar no lo arregla** |
+| `no se pudo verificar ahora: …` | La comprobación no llegó a completarse (timeout, `429` o `5xx`). **No dice nada sobre su configuración: recargue una vez** (§3) |
 | `el proveedor no es alcanzable: … 400 Bad Request …` **en el perfil A** | Casi siempre es **la clave**, no la red: Google responde 400 —no 401— a una clave inválida o al marcador sin sustituir. Revise `LLM_API_KEY` antes de revisar la conexión |
 | `ausente` | El archivo `.env` no existe o la línea quedó vacía |
 
@@ -881,6 +898,7 @@ desde plantilla.
 | Falsos negativos críticos | PENDIENTE DE MEDICIÓN | |
 | Tasa de escalamiento por nivel | PENDIENTE DE MEDICIÓN | |
 | Turnos por conversación | PENDIENTE DE MEDICIÓN | |
+| **Resistencia a inyección de prompt** (2026-08-10) | **4 de 4 ataques resistidos**: 0 cambiaron la clase, 0 cerraron la llamada, 0 filtraron el prompt | 2 llamadas por navegador con micrófono real. Registro, argumento estructural y **lo que la prueba NO cubre**: [`docs/prueba_inyeccion.md`](docs/prueba_inyeccion.md) |
 
 ### 9.4 Recuperación (RAG) — medido
 
@@ -975,7 +993,8 @@ día (§7).
 | `permission denied … docker daemon socket` | Linux sin `sudo` | Use `sudo` en **todos** los comandos |
 | `port is already allocated` | Algo ocupa el 8080 | Ponga `PUERTO=8081` en `.env`, `up -d` otra vez, y abra `localhost:<PUERTO>` (8081 en este ejemplo), no 8080 |
 | `/salud` no abre | El contenedor no arrancó | `docker compose ps` y `docker compose logs` |
-| Veredicto NO LISTO, fila `LLM` o `STT` en rojo | Clave ausente, inválida, o modelo que el proveedor no sirve | §4 |
+| Veredicto NO LISTO, fila `LLM` en rojo, detalle `no se pudo verificar ahora…` | La comprobación no obtuvo respuesta del proveedor (timeout, 429 o 5xx). **No** significa que el modelo no exista | **Recargue `/salud` una vez.** Ocurre en el 2,6 % de las comprobaciones (§3) |
+| Veredicto NO LISTO, fila `LLM` o `STT` en rojo, otro detalle | Clave ausente, inválida, o modelo que el proveedor no sirve | §4 |
 | `Permission denied` en dataset o logs (Fedora/RHEL) | SELinux sin la etiqueta `z` | Ya está en `compose.yaml`; si lo editó, no quite el `z` |
 | `exec /usr/local/bin/entrypoint.sh: no such file` en Windows | El `.sh` se clonó con CRLF | `.gitattributes` lo evita. Si pasó: `git config core.autocrlf false`, borre la copia y vuelva a clonar |
 

@@ -360,6 +360,64 @@ def _listar_modelos(base_url: str, api_key: str, timeout_s: float) -> tuple[list
     return [m for m in modelos if m], datos
 
 
+_HTTP_TRANSITORIOS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+"""Códigos que significan «vuelva a intentarlo», no «su configuración está mal».
+
+`429` está aquí por el caso real: el nivel gratuito del proveedor limita la tasa
+y `GET /models` cuenta contra ella. Los `5xx` son fallos del proveedor. Ninguno
+dice nada sobre si `LLM_MODELO` existe.
+"""
+
+
+def _es_fallo_de_transporte(exc: BaseException) -> bool:
+    """La petición no llegó a tener respuesta: timeout, DNS, conexión cortada.
+
+    Se resuelve por el nombre de la clase y no con `isinstance`, para no
+    importar `httpx` en el módulo: la sonda lo importa perezosamente y este
+    archivo se carga en rutas que no hacen red.
+    """
+    return any(
+        clase.__name__ == "TransportError" for clase in type(exc).__mro__
+    )
+
+
+def _diagnostico_de_sondeo(
+    exc: BaseException, codigo: int | None, modelo: str, timeout_s: float
+) -> tuple[str, str] | None:
+    """Clasifica el fallo del sondeo. `None` si no es transitorio.
+
+    Devuelve `(categoria, detalle)`. La categoría viaja también en `datos` para
+    que quien lea el JSON no tenga que interpretar una frase en español.
+
+    **Por qué existe esta función.** Antes, todo lo que no fuera 401/403 caía en
+    «el proveedor no es alcanzable», y el veredicto NO LISTO que lo acompaña se
+    lee como «esta solución no levanta». Medido sobre `datos/logs/app.log` del
+    2026-08-10: **12 de 456 sondeos** (2,6 %) desde las 09:00 no obtuvieron
+    respuesta del proveedor y el siguiente, 30 s después, sí. Un evaluador con el
+    cronómetro corriendo que caiga en uno de esos 12 concluye que el sistema está
+    roto cuando lo único que pasó fue que una petición no volvió.
+    """
+    if codigo in _HTTP_TRANSITORIOS:
+        if codigo == 429:
+            causa = (
+                "el proveedor está limitando la tasa (HTTP 429); el nivel "
+                "gratuito cuenta también esta comprobación"
+            )
+        else:
+            causa = f"el proveedor devolvió HTTP {codigo}, que es un fallo suyo"
+    elif _es_fallo_de_transporte(exc):
+        causa = f"la petición no obtuvo respuesta en {timeout_s:.0f} s ({exc})"
+    else:
+        return None
+
+    return (
+        "transitorio",
+        f"no se pudo verificar ahora: {causa}. Esto NO dice que «{modelo}» no "
+        "exista ni que la clave esté mal: recargue /salud una vez antes de dar "
+        "nada por roto. Si persiste, revise la red y LLM_BASE_URL",
+    )
+
+
 def _parecidos(modelo: str, disponibles: list[str], tope: int = 5) -> list[str]:
     """Modelos servidos que comparten algún fragmento con el pedido.
 
@@ -450,20 +508,29 @@ def sondear_llm(cfg: Config) -> Componente:
     except Exception as exc:  # noqa: BLE001
         codigo = getattr(getattr(exc, "response", None), "status_code", None)
         datos["codigo_http"] = codigo
+        transitorio = _diagnostico_de_sondeo(
+            exc, codigo, cfg.llm_modelo, cfg.salud_timeout_s
+        )
         if codigo in (401, 403):
+            datos["diagnostico"] = "clave"
             detalle = (
                 f"el proveedor rechaza la clave (HTTP {codigo}): revísela en .env"
             )
         elif cfg.llm_es_local:
+            datos["diagnostico"] = "servidor_local_caido"
             detalle = (
                 f"no se alcanza el servidor local en {cfg.llm_base_url}: {exc}. "
                 "¿Está corriendo? `docker compose --profile local up -d`"
             )
+        elif transitorio is not None:
+            datos["diagnostico"], detalle = transitorio
         else:
+            datos["diagnostico"] = "inalcanzable"
             detalle = f"el proveedor no es alcanzable: {exc}"
         return Componente("llm", nombre, "fallo", detalle + sufijo, datos=datos)
 
     if cfg.llm_modelo in modelos:
+        datos["diagnostico"] = "ok"
         return Componente(
             "llm",
             nombre,
@@ -475,13 +542,18 @@ def sondear_llm(cfg: Config) -> Componente:
 
     pistas = _parecidos(cfg.llm_modelo, modelos)
     datos["coincidencias"] = pistas
+    datos["diagnostico"] = "modelo_inexistente"
     coincidencias = ", ".join(pistas) if pistas else "ninguna"
+    # Único mensaje que afirma que el modelo NO EXISTE, y puede afirmarlo porque
+    # el proveedor respondió: hay una lista y el identificador no está en ella.
+    # Recargar no lo arregla — a diferencia de un fallo transitorio, que sí.
     return Componente(
         "llm",
         nombre,
         "fallo",
-        f"el proveedor no sirve «{cfg.llm_modelo}» (responde con "
-        f"{len(modelos)} modelos); modelos disponibles que coinciden: "
+        f"el proveedor respondió y NO sirve «{cfg.llm_modelo}» (su lista trae "
+        f"{len(modelos)} modelos); recargar no lo arregla, hay que corregir "
+        f"LLM_MODELO en .env. Modelos disponibles que coinciden: "
         f"{coincidencias}" + sufijo,
         datos=datos,
     )
