@@ -110,6 +110,48 @@ services:
       start_period: 45s
 
   # ===========================================================================
+  # Perfil `herramientas` — indexador y calibradores. NO arranca por defecto.
+  # ===========================================================================
+  # El índice del corpus se construye AQUÍ y viaja construido en `indice_base/`.
+  # Nunca en el arranque del servicio: 107 PDFs son minutos de CPU, y un agente
+  # que tarda minutos en poder contestar es un agente caído durante esos minutos.
+  #
+  #   docker compose --profile herramientas run --rm indexador
+  #   docker compose --profile herramientas run --rm indexador scripts/calibrar_troceo.py
+  #   docker compose --profile herramientas run --rm indexador scripts/calibrar_umbral.py
+  #
+  # Comparte imagen con `agente` a propósito: el índice queda escrito con el
+  # MISMO embedder que después lo consulta. Indexar con un modelo y consultar con
+  # otro produce vectores incomparables y una recuperación que devuelve ruido con
+  # aspecto de resultado — un fallo que no se ve hasta que alguien lee las citas.
+  #
+  # `scripts/` no está en la imagen (.dockerignore lo excluye: no hace falta para
+  # servir) y por eso entra aquí como montaje.
+  indexador:
+    image: ghcr.io/elorro/voice-agent-postop:v0.1.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["herramientas"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DIR_APP: /app
+      DATASET_DIR: ./dataset
+      INDICE_SEMILLA_DIR: /opt/indice_base
+    # Sin el entrypoint del servicio: aquí no se siembra nada ni se levanta
+    # uvicorn, se ejecuta un script y el contenedor termina.
+    entrypoint: ["python"]
+    command: ["scripts/indexar_corpus.py"]
+    volumes:
+      - "${DATASET_DIR:-./dataset}:/app/dataset:ro,z"
+      - "./scripts:/app/scripts:ro,z"
+      # ESCRITURA: es el único servicio que puede escribir la semilla del índice.
+      # En `agente` este mismo directorio va montado `:ro`.
+      - "${INDICE_BASE_DIR:-./indice_base}:/opt/indice_base:z"
+
+  # ===========================================================================
   # Perfil `local` — fallback del modelo de lenguaje. NO arranca por defecto.
   # ===========================================================================
   # `profiles` es lo que lo mantiene apagado: `docker compose up -d` a secas

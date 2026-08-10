@@ -11,3 +11,20 @@ pytest==9.1.1
 # Sin ellas, ese test hace skip; el resto de la suite corre igual.
 pandas==3.0.3
 openpyxl==3.1.5
+
+# Para `tests/test_consola_documentos.py`, que ejercita los cuatro endpoints de
+# la compuerta G5 contra la aplicación real con `TestClient`.
+#
+# Están aquí por una LECCIÓN, no por completitud. Ese test existía y hacía `skip`
+# en esta máquina porque `fastapi` es dependencia de runtime; mientras tanto un
+# `TypeError` en el despacho de la ingesta —argumentos posicionales contra una
+# firma con `keyword-only`— dejaba todo documento subido congelado en «en cola».
+# El test lo habría atrapado en la primera corrida. Un test que siempre se salta
+# no es un test: es un archivo.
+#
+# `pypdf` va aquí además de en requirements.txt para que `scripts/` (indexador y
+# calibradores) se puedan ejecutar fuera del contenedor.
+fastapi==0.141.1
+httpx==0.28.1
+python-multipart==0.0.32
+pypdf==6.15.0

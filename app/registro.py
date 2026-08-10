@@ -240,6 +240,9 @@ def calcular_metricas(cfg: Config) -> dict[str, Any]:
     modelos_vistos: dict[str, dict[str, int]] = {}
     consultas_rag = 0
     citas_rag = 0
+    rag_suficientes = 0
+    rag_sin_fuente = 0
+    fuentes_rag: dict[str, int] = {}
     segundos_audio = 0.0
     fuentes: dict[str, int] = {}
 
@@ -290,6 +293,13 @@ def calcular_metricas(cfg: Config) -> dict[str, Any]:
         rag = registro.get("rag") or {}
         consultas_rag += int(rag.get("consultas") or 0)
         citas_rag += len(rag.get("citas") or [])
+        if rag.get("consultas"):
+            if rag.get("suficiente"):
+                rag_suficientes += 1
+            else:
+                rag_sin_fuente += 1
+            fuente_rag = str(rag.get("fuente") or "?")
+            fuentes_rag[fuente_rag] = fuentes_rag.get(fuente_rag, 0) + 1
 
         stt = registro.get("stt") or {}
         if isinstance(stt.get("segundos_audio"), (int, float)):
@@ -361,7 +371,15 @@ def calcular_metricas(cfg: Config) -> dict[str, Any]:
         "rag": {
             "consultas": consultas_rag,
             "citas": citas_rag,
-            "nota": "0 y 0 honestos: el sub-paso 3.1 no consulta el corpus. Se llena en 3.2.",
+            "respondidas_con_fuente": rag_suficientes,
+            "limite_declarado": rag_sin_fuente,
+            "fuentes": fuentes_rag,
+            "nota": (
+                "«límite declarado» son las preguntas en las que ningún fragmento "
+                "alcanzó el umbral de suficiencia y el agente dijo que no tenía el "
+                "dato. Es una salida correcta, no un fallo: la alternativa era "
+                "improvisar una respuesta clínica."
+            ),
         },
         "fuente_respuesta": fuentes,
     }

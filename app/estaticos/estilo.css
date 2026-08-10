@@ -128,3 +128,34 @@ button.secundario { background: transparent; color: var(--acento); border: 1px s
 .campos label { font-size: .85rem; color: var(--tenue); display: block; }
 .campos input { padding: .5rem .6rem; border-radius: 8px; border: 1px solid var(--borde);
   background: var(--tarjeta); color: var(--texto); font: inherit; width: 9rem; }
+.campos input[type="file"] { width: auto; min-width: 20rem; }
+
+/* --- Añadido en 3.2: consola de administración y citas del RAG -------------- */
+
+/* El indicador de estado del reto. Los cuatro estados tienen color propio: uno
+   solo para «no disponible» haría indistinguible «espere» de «falló», que es
+   justo la diferencia que el operador necesita ver. */
+.marca { display: inline-block; padding: .15rem .6rem; border-radius: 999px;
+  font-weight: 700; font-size: .75rem; letter-spacing: .04em; white-space: nowrap; }
+.marca-disponible { background: #e6f4ec; color: #0f7a3d; }
+.marca-procesando { background: #e7eefc; color: #1a5fb4; }
+.marca-pendiente  { background: #f0f1f4; color: #5b6472; }
+.marca-error      { background: #fdecee; color: #a71d2a; }
+
+/* El punto que late mientras hay una ingesta en curso: sin él, «procesando» y
+   una página congelada se ven igual. */
+.latido { display: inline-block; width: .5rem; height: .5rem; border-radius: 999px;
+  background: currentColor; margin-right: .35rem; animation: latir 1s ease-in-out infinite; }
+@keyframes latir { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .latido { animation: none; } }
+
+.documentos td { vertical-align: middle; }
+.documentos .motivo { display: block; color: var(--tenue); font-size: .82rem; margin-top: .2rem; }
+.documentos .vacia { color: var(--tenue); font-style: italic; }
+
+button.enlace { background: none; border: 0; color: var(--acento); cursor: pointer;
+  font: inherit; font-size: .88rem; padding: 0; text-decoration: underline; }
+button.enlace[disabled] { opacity: .45; cursor: not-allowed; }
+
+.citas { margin: .35rem 0 0; padding: 0; list-style: none; }
+.citas li { font-size: .78rem; color: var(--tenue); padding: .1rem 0; border: 0; }

@@ -23,6 +23,7 @@ from app.llm.extractor import (
     CAMPO_PREGUNTA,
     ContratoExtraccion,
     extraer,
+    hay_marca_de_pregunta,
     mensaje_usuario,
     normalizar,
     parsear_json,
@@ -331,3 +332,57 @@ def test_detecta_la_pregunta_del_paciente() -> None:
     )
     assert extraccion.pregunta_del_paciente is True
     assert extraccion.todo_ausente
+
+
+# --------------------------------------------------------------------------- #
+# Detector sintáctico de pregunta (3.2)
+#
+# Se añadió porque se midió que `llama3.2:3b` deja pasar preguntas explícitas, y
+# con la marca del modelo como único detector el RAG resulta inalcanzable en el
+# perfil de fallback: nadie levanta la mano y el corpus no se consulta nunca.
+# --------------------------------------------------------------------------- #
+def test_detecta_la_pregunta_por_signo_de_interrogacion() -> None:
+    assert hay_marca_de_pregunta("Doctor, ¿cómo cuido la herida?")
+    assert hay_marca_de_pregunta("me puedo bañar?")
+
+
+def test_detecta_la_pregunta_sin_signos_por_el_arranque() -> None:
+    """La transcripción puede llegar sin puntuación."""
+    assert hay_marca_de_pregunta("cómo debo cuidar la herida")
+    assert hay_marca_de_pregunta("Puedo bañarme hoy")
+    assert hay_marca_de_pregunta("es normal que duela tanto")
+
+
+def test_una_respuesta_normal_no_se_toma_por_pregunta() -> None:
+    for texto in (
+        "La herida la veo normal, sin nada raro.",
+        "El dolor está en seis de diez.",
+        "",
+        "   ",
+    ):
+        assert not hay_marca_de_pregunta(texto)
+
+
+def test_el_detector_sintactico_SE_UNE_al_modelo_y_no_lo_sustituye() -> None:
+    """Solo puede añadir detecciones, nunca quitarlas: un modelo que sí detecta
+    la pregunta sin signos («me preocupa la herida») no debe verse estorbado."""
+    llm = responder(json.dumps({CAMPO_PREGUNTA: True}))
+    salida = extraer(llm, CONTRATO, "me preocupa la herida", None, timeout_ms=500)
+    assert salida.pregunta_del_paciente is True
+
+    # Y al revés: el modelo dice que no, la sintaxis dice que sí.
+    llm = responder(json.dumps({CAMPO_PREGUNTA: False}))
+    salida = extraer(llm, CONTRATO, "¿cómo debo cuidar la herida?", None, timeout_ms=500)
+    assert salida.pregunta_del_paciente is True
+    assert any("marca sintáctica" in n for n in salida.notas)
+
+
+def test_la_pregunta_sobrevive_a_la_degradacion_del_extractor() -> None:
+    """Un proveedor caído no debe hacer desaparecer la duda del paciente: es lo
+    único que el agente todavía podría atender."""
+    salida = extraer(
+        fallar(TIMEOUT), CONTRATO, "¿me puedo bañar la herida?", None, timeout_ms=500
+    )
+    assert salida.resultado == TIMEOUT
+    assert salida.todo_ausente
+    assert salida.pregunta_del_paciente is True

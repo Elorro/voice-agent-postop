@@ -1,0 +1,8 @@
+corpus-2026-08-10 trozos=16424
+fecha=2026-08-10T02:02:43+0000
+coleccion=corpus_postop
+documentos_indexados=104
+descartados_duplicado=2
+descartados_sin_texto=1
+troceo_caracteres=600 solape=150
+embedder=all-MiniLM-L6-v2 (ONNX, 384 dim, espacio cosine)

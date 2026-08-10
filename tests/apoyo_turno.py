@@ -18,10 +18,14 @@ from typing import Any, Callable
 from app.config import Config, cargar_config
 from app.contratos import OK, TIMEOUT, SalidaLLM, SalidaSTT, SalidaTTS, Servicios
 from app.llm.redactor import PROMPT_SISTEMA as PROMPT_REDACTOR
+from app.rag.respuesta import PROMPT_SISTEMA as PROMPT_RAG
+from app.rag.tipos import Fragmento
 
 __all__ = [
     "config_de_prueba",
     "LLMFalso",
+    "fragmento",
+    "rag_fijo",
     "servicios",
     "stt_fijo",
     "tts_falso",
@@ -74,6 +78,8 @@ class LLMFalso:
     respuestas_extractor: list[str] = field(default_factory=list)
     respuesta_redactor: str | None = None
     redactor_timeout: bool = False
+    respuesta_rag: str | None = None
+    rag_timeout: bool = False
     modelo: str = "modelo-de-prueba"
     tokens_in: int = 40
     tokens_out: int = 12
@@ -88,14 +94,24 @@ class LLMFalso:
         temperatura: float = 0.0,
         formato_json: bool = False,
     ) -> SalidaLLM:
-        es_redactor = mensajes and mensajes[0].get("content") == PROMPT_REDACTOR
+        sistema = mensajes[0].get("content") if mensajes else ""
+        es_redactor = sistema == PROMPT_REDACTOR
+        es_rag = sistema == PROMPT_RAG
         self.llamadas.append(
             {
-                "rol": "redactor" if es_redactor else "extractor",
+                "rol": "rag" if es_rag else ("redactor" if es_redactor else "extractor"),
                 "timeout_ms": timeout_ms,
                 "mensajes": mensajes,
             }
         )
+        if es_rag:
+            if self.rag_timeout:
+                return SalidaLLM("", float(timeout_ms), TIMEOUT, self.modelo)
+            texto = self.respuesta_rag
+            if texto is None:
+                texto = "Según las guías, mantenga la herida limpia y seca."
+            return SalidaLLM(texto, 9.0, OK, self.modelo, self.tokens_in, self.tokens_out)
+
         if es_redactor:
             if self.redactor_timeout:
                 return SalidaLLM("", float(timeout_ms), TIMEOUT, self.modelo)
@@ -139,13 +155,48 @@ def tts_falso(registro: list[str] | None = None) -> Callable[[str], SalidaTTS]:
     return sintetizar
 
 
+def fragmento(
+    texto: str = "Mantenga la herida limpia y seca durante las primeras 48 horas.",
+    score: float = 0.72,
+    ruta: str = "Appendicitis/PLAN DE CUIDADO EN CASA.pdf",
+    pagina: int = 3,
+) -> Fragmento:
+    """Un fragmento recuperado, con metadatos plausibles."""
+    return Fragmento(
+        texto=texto,
+        score=score,
+        ruta_relativa=ruta,
+        pagina=pagina,
+        escenario="Appendicitis",
+        idioma="es",
+        origen="corpus",
+        documento_id="corpus-0123456789abcdef",
+        hash_documento="0123456789abcdef" * 4,
+    )
+
+
+def rag_fijo(fragmentos: list[Fragmento]) -> Callable[[str, int], list[Fragmento]]:
+    """Recuperación de mentira: devuelve siempre los mismos fragmentos.
+
+    Es la única forma de provocar a voluntad el caso que más importa —el corpus
+    no cubre la pregunta— sin depender de qué haya en el índice real.
+    """
+
+    def consultar(consulta: str, k: int) -> list[Fragmento]:
+        return list(fragmentos[:k])
+
+    return consultar
+
+
 def servicios(
     llm: LLMFalso,
     transcripciones: list[str],
     dichos: list[str] | None = None,
+    consultar_rag: Callable[[str, int], list[Fragmento]] | None = None,
 ) -> Servicios:
     return Servicios(
         transcribir=stt_fijo(transcripciones),
         completar=llm.completar,
         sintetizar=tts_falso(dichos),
+        consultar_rag=consultar_rag,
     )

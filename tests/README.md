@@ -1,4 +1,4 @@
-# Tests del módulo de política (Fase 2.1)
+# Tests: política (2.1), turno de voz (3.1) y RAG (3.2)
 
 ## Cómo se corre
 
@@ -22,6 +22,18 @@ no depende de ninguna: solo librería estándar.
 | `test_niveles.py` | §2.1 casos de borde del enrutador · §3 banderas y precedencia · §4 compuerta (incl. `DESCONOCIDO` como activa) · §5 conteo y umbral asimétrico · §7.1 suficiencia · §7.4 cierre forzado · §8 escalamiento · §8.2 errores de invocación · par de colisión (D5). |
 | `test_contrato.py` | HD5 consistencia de `Decision` · HD6 orden de indagación · HD7 contabilidad del presupuesto · pureza (idempotencia, no mutación, solo stdlib) · property test §4↔§5 · invariante duro §8.1 sobre el espacio de entradas. |
 | `test_dev_set.py` | Criterio de aceptación sobre los 160 casos y equivalencia caso a caso con el oráculo `scripts/verificacion_hd1.py`. |
+| `test_extraccion.py` | LLM #1: contrato de dominio cerrado, «cita o no cuenta», y las degradaciones (JSON roto, timeout, valores fuera de dominio) que terminan en AUSENTE y nunca en un valor plausible. |
+| `test_plantillas.py` | Cobertura: una repregunta por señal del núcleo y un guion por clase, verificado **contra `politica/`** para que una señal nueva no pueda quedarse muda. |
+| `test_registro.py` | `turnos.jsonl`: escritura, parcheo de la telemetría, percentiles y consumo leídos del archivo. |
+| `test_turno.py` | El turno completo con los tres servicios externos sustituidos por dobles: orden de etapas, presupuesto cobrado al emitir, y cada degradación bajando un escalón sin tumbar la llamada. |
+| `test_import_unico_politica.py` | Un solo `import politica` en todo el árbol, sobre los archivos rastreados por git. |
+| `test_rag_troceo.py` | Troceo y solape contra el techo de 256 tokens del embedder, atribución de página, determinismo, y detección de idioma. |
+| `test_rag_duplicados.py` | Duplicados **exactos y casi exactos**: el corpus trae de los dos y el SHA-256 solo ve los primeros. |
+| `test_rag_recuperacion.py` | **Umbral de suficiencia.** Por debajo del umbral la recuperación devuelve vacío; el umbral se aplica fragmento a fragmento, no solo al mejor. |
+| `test_rag_respuesta.py` | Separación dato/instrucción, y la propiedad central: **sin fragmentos no se invoca al modelo**. No existe ruta en la que redacte una respuesta clínica sin fuentes. |
+| `test_rag_no_altera_clase.py` | **Ninguna salida del RAG mueve la clase.** El mismo turno con y sin un RAG adversario, exigiendo la misma decisión, más la reejecución de `politica.decidir` sobre la entrada anotada. |
+| `test_rag_documentos.py` | Ciclo de vida de un documento subido: `pendiente → procesando → disponible`/`error`, y que «disponible» se afirme **contando fragmentos dentro del índice**. |
+| `test_consola_documentos.py` | Los cuatro endpoints de G5 contra la aplicación real. Hace `skip` sin `fastapi` instalado (es dependencia de runtime, no de test). |
 
 ## Criterio de aceptación (`test_dev_set.py`)
 

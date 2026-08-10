@@ -133,6 +133,27 @@ class Config:
     vad_silencio_ms: int
     vad_minimo_habla_ms: int
 
+    # --- RAG (sub-paso 3.2) ---
+    # El RAG responde PREGUNTAS DEL PACIENTE. No participa en la clasificación:
+    # la clase sale de `politica.decidir` sobre las señales extraídas, y ninguna
+    # de estas variables puede alterarla. Ver app/rag/__init__.py.
+    #
+    # Los cuatro números de troceo y umbral están CALIBRADOS, no elegidos: el
+    # procedimiento y las mediciones están en docs/calibracion_rag.md, y los
+    # scripts que los produjeron son scripts/calibrar_troceo.py y
+    # scripts/calibrar_umbral.py.
+    rag_activo: bool
+    rag_k: int
+    rag_umbral: float
+    rag_pool: int
+    rag_alfa: float
+    rag_trozo_caracteres: int
+    rag_solape_caracteres: int
+    rag_max_texto_citado: int
+    rag_timeout_ms: int
+    rag_max_tokens: int
+    subidos_max_mb: float
+
     # --- verificación de estado ---
     salud_timeout_s: float
     salud_cache_s: float
@@ -229,6 +250,50 @@ def cargar_config() -> Config:
         max_turnos_llamada=_entero("MAX_TURNOS_LLAMADA", 12),
         fiebre_min_c=_flotante("FIEBRE_MIN_C", 30.0),
         fiebre_max_c=_flotante("FIEBRE_MAX_C", 45.0),
+        rag_activo=_booleano("RAG_ACTIVO", True),
+        rag_k=_entero("RAG_K", 5),
+        # 0.59 sobre el score FUNDIDO (α = 0,5). Rechaza las 8 consultas ajenas
+        # medidas —máximo 0,536— con **0,054 de margen**, y acepta el documento
+        # subido de la compuerta G5 (0,6444).
+        #
+        # Sustituye a un 0,65 sobre el score denso puro que se entregó primero y
+        # era peor por dos razones, en este orden:
+        #
+        # 1. **Fallaba G5, que es eliminatoria.** El fragmento con la respuesta
+        #    literal del documento subido puntúa 0,5988 en denso puro, por debajo
+        #    de un ejercicio de rodilla sin relación (0,6418). No existe umbral
+        #    denso que acepte lo correcto y rechace lo ajeno.
+        # 2. **Su margen de 0,033 venía de un hueco de 0,021 medido con n = 18.**
+        #    Eso está dentro del ruido de muestreo: la garantía de «nunca responde
+        #    desde fragmentos ajenos» que compraba era nominal, no real.
+        #
+        # El coste es que más consultas cubiertas caen por debajo y el agente
+        # declara su límite. Ese es el error que la rúbrica premia; responder
+        # desde un fragmento irrelevante es el que penaliza.
+        rag_umbral=_flotante("RAG_UMBRAL", 0.59),
+        # Recuperación HÍBRIDA: el canal denso propone `rag_pool` candidatos y el
+        # score final funde coseno con cobertura léxica ponderada por IDF, con
+        # peso `rag_alfa` al denso. `rag_alfa=1` reproduce el comportamiento
+        # denso puro, que es como se miden los dos regímenes sobre el mismo
+        # índice. El método y su justificación están en app/rag/lexico.py.
+        #
+        # 0,5 y no 1,0: es lo que hace pasar G5. En el caso medido, la fusión
+        # mueve el fragmento correcto del puesto 2 al 1 y le abre el doble de
+        # margen (0,6444 contra 0,3255). Lo que se paga está declarado en
+        # docs/calibracion_rag.md §4.3: con α < 1 el IDF interno del corpus
+        # degrada el orden de algunas consultas del propio corpus.
+        rag_pool=_entero("RAG_POOL", 60),
+        rag_alfa=_flotante("RAG_ALFA", 0.5),
+        # 600 y 150 salen de `scripts/calibrar_troceo.py` sobre los 107 PDFs:
+        # el embedder trunca a 256 tokens y la tasa caracteres/token del percentil
+        # 5 en español es 2,537 → techo real 649 caracteres. 600 deja 8 % de
+        # margen. El solape son ~2 oraciones medianas del corpus (P50 = 69).
+        rag_trozo_caracteres=_entero("RAG_TROZO_CARACTERES", 600),
+        rag_solape_caracteres=_entero("RAG_SOLAPE_CARACTERES", 150),
+        rag_max_texto_citado=_entero("RAG_MAX_TEXTO_CITADO", 400),
+        rag_timeout_ms=_entero("RAG_TIMEOUT_MS", 4000),
+        rag_max_tokens=_entero("RAG_MAX_TOKENS", 200),
+        subidos_max_mb=_flotante("SUBIDOS_MAX_MB", 25.0),
         vad_umbral_rms=_flotante("VAD_UMBRAL_RMS", 0.02),
         vad_silencio_ms=_entero("VAD_SILENCIO_MS", 700),
         vad_minimo_habla_ms=_entero("VAD_MINIMO_HABLA_MS", 300),

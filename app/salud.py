@@ -147,13 +147,31 @@ def precargar(cfg: Config) -> None:
 
 
 def sondear_indice(cfg: Config) -> Componente:
-    """Abre el almacén de ChromaDB y cuenta documentos.
+    """Abre el almacén de ChromaDB y cuenta fragmentos.
 
-    Cero documentos **no** es un fallo hoy: el indexador todavía no existe y el
-    directorio de semilla (`/opt/indice_base`) está vacío. El fallo es no poder
-    abrir o no poder escribir el almacén.
+    **NO bloqueante, y es una decisión de diseño, no un descuido.** Sin índice el
+    agente pierde la capacidad de responder preguntas del paciente y lo declara
+    («no tengo información sobre eso en mis fuentes»); la clasificación clínica
+    sigue intacta, porque sale de `politica.decidir` sobre las señales extraídas y
+    no consulta el corpus por ninguna ruta. Hundir el veredicto aquí diría «el
+    sistema no sirve» de un sistema que sí clasifica, que es lo que se evalúa.
+
+    Cero fragmentos SÍ es un aviso desde 3.2: el índice viaja construido en
+    `indice_base/` y se siembra al arrancar, así que un cero significa que la
+    semilla no llegó —clon sin `indice_base/`, o volumen sembrado antes de que el
+    índice existiera— y dice cómo arreglarlo.
     """
     datos: dict[str, Any] = {"ruta": str(cfg.almacen_indice)}
+    if not cfg.rag_activo:
+        return Componente(
+            "indice",
+            "Índice vectorial",
+            "aviso",
+            "RAG_ACTIVO=0: recuperación desactivada por configuración. El agente "
+            "declara su límite ante cualquier pregunta del paciente",
+            bloqueante=False,
+            datos=datos,
+        )
     try:
         import chromadb
 
@@ -165,23 +183,54 @@ def sondear_indice(cfg: Config) -> Componente:
             n = cliente.get_collection(cfg.coleccion_rag).count()
         else:
             n = 0
-        datos["documentos"] = n
+        datos["fragmentos"] = n
         datos["coleccion"] = cfg.coleccion_rag
+        datos["umbral"] = cfg.rag_umbral
+        datos["k"] = cfg.rag_k
         marcador = cfg.dir_indice / ".version_semilla"
         if marcador.is_file():
             datos["semilla"] = marcador.read_text(encoding="utf-8").strip()
-        detalle = (
-            f"{n} documentos en «{cfg.coleccion_rag}»"
-            if n
-            else "0 documentos (vacío: el indexador aún no existe)"
+
+        if not n:
+            return Componente(
+                "indice",
+                "Índice vectorial",
+                "aviso",
+                "0 fragmentos: la semilla no llegó al volumen. Compruebe que "
+                "`indice_base/` existe en el clon y no está vacío; si hace falta, "
+                "reconstrúyalo con `docker compose --profile herramientas run "
+                "--rm indexador` y reinicie con `docker compose down && up -d`. "
+                "Mientras tanto el agente declara su límite ante toda pregunta",
+                bloqueante=False,
+                datos=datos,
+            )
+
+        # Desglose por origen: separa lo que trajo el corpus de lo que subió la
+        # consola. Sin él, «12.000 fragmentos» no distingue un índice sembrado de
+        # uno que alguien llenó a mano por la consola.
+        detalle = f"{n} fragmentos en «{cfg.coleccion_rag}»"
+        try:
+            from app.rag import indice as _indice
+
+            almacen = _indice.Almacen(cliente.get_collection(cfg.coleccion_rag), cfg.almacen_indice)
+            por_origen = almacen.resumen_por_origen()
+            if por_origen:
+                datos["por_origen"] = por_origen
+                detalle += " (" + ", ".join(f"{k}: {v}" for k, v in sorted(por_origen.items())) + ")"
+        except Exception:  # noqa: BLE001 - informativo
+            pass
+        detalle += f"; umbral de suficiencia {cfg.rag_umbral:g}, k={cfg.rag_k}"
+        return Componente(
+            "indice", "Índice vectorial", "ok", detalle, bloqueante=False, datos=datos
         )
-        return Componente("indice", "Índice vectorial", "ok", detalle, datos=datos)
     except Exception as exc:  # noqa: BLE001
         return Componente(
             "indice",
             "Índice vectorial",
-            "fallo",
-            f"no se pudo abrir el almacén: {exc}",
+            "aviso",
+            f"no se pudo abrir el almacén: {exc}. El agente sigue clasificando; "
+            "pierde solo la capacidad de responder preguntas",
+            bloqueante=False,
             datos=datos,
         )
 

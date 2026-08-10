@@ -65,6 +65,7 @@ __all__ = [
     "prompt_sistema",
     "mensaje_usuario",
     "parsear_json",
+    "hay_marca_de_pregunta",
     "normalizar",
     "validar",
     "extraer",
@@ -73,11 +74,15 @@ __all__ = [
 CAMPO_PREGUNTA = "pregunta_del_paciente"
 """No es una señal clínica y no entra en `Observacion`.
 
-Existe para una sola cosa: saber si hay que anteponer la declaración de límite.
-El agente de 3.1 no puede responder preguntas clínicas —el RAG llega en 3.2— y
-decirlo explícitamente es la única salida honesta. Que lo detecte el extractor y
-no un `"?" in transcripcion` es porque el paciente pregunta sin signo de
-interrogación en la transcripción tanto como con él.
+Existe para una sola cosa: saber si hay que **consultar el corpus**. Desde 3.2, si
+esta marca es verdadera el turno recupera del índice y responde con cita, o
+declara su límite; si es falsa, el corpus ni se toca.
+
+Que lo detecte el modelo y no un `"?" in transcripcion` sigue siendo lo correcto:
+el paciente pregunta sin signo de interrogación tanto como con él. Pero desde 3.2
+el modelo **no es el único** detector: se une con `hay_marca_de_pregunta`, porque
+se midió que `llama3.2:3b` deja pasar preguntas explícitas y con la marca del
+modelo como único camino el RAG resulta inalcanzable en el perfil de fallback.
 """
 
 
@@ -438,9 +443,12 @@ def extraer(
         resultado = OK
 
     if resultado != OK or datos is None:
+        # Aunque la extracción se degrade, la marca de pregunta se conserva si el
+        # texto la trae: un proveedor caído no debe hacer desaparecer la duda del
+        # paciente, que es lo único que el agente todavía podría atender.
         return Extraccion(
             senales=_vacias(contrato),
-            pregunta_del_paciente=False,
+            pregunta_del_paciente=hay_marca_de_pregunta(transcripcion),
             salida=SalidaLLM(
                 salida.texto,
                 salida.ms,
@@ -456,6 +464,10 @@ def extraer(
         )
 
     senales, pregunta, notas, evidencias = validar(datos, contrato, transcripcion)
+    # UNIÓN con el detector sintáctico, no sustitución. Ver `hay_marca_de_pregunta`.
+    if not pregunta and hay_marca_de_pregunta(transcripcion):
+        pregunta = True
+        notas = (*notas, "pregunta detectada por marca sintáctica, no por el modelo")
     return Extraccion(
         senales=senales,
         pregunta_del_paciente=pregunta,
@@ -473,6 +485,50 @@ def extraer(
         notas=notas,
         evidencias=evidencias,
     )
+
+
+_MARCA_INTERROGATIVA = re.compile(r"[¿?]")
+_ARRANQUES_DE_PREGUNTA = re.compile(
+    r"^\W*(que|qué|cual|cuál|cuando|cuándo|como|cómo|cuanto|cuánto|cuanta|cuánta|"
+    r"donde|dónde|por que|por qué|puedo|podria|podría|debo|deberia|debería|"
+    r"tengo que|hay que|es normal|esta bien|está bien|me puedo|se puede)\b",
+    re.IGNORECASE,
+)
+
+
+def hay_marca_de_pregunta(transcripcion: str) -> bool:
+    """Detector SINTÁCTICO de pregunta. Se une al del modelo, no lo sustituye.
+
+    Por qué existe, medido y no supuesto (2026-08-10, perfil local del `.env` de
+    desarrollo): ante «Doctor, ¿cómo debo cuidar la herida en casa después de la
+    cirugía?», `llama3.2:3b` devolvió `pregunta_del_paciente: false` —y además
+    inventó una cita que el validador tumbó—. Con la marca del modelo como único
+    detector, **el RAG entero es inalcanzable en el perfil de fallback**: nunca se
+    consulta el corpus porque nadie levanta la mano.
+
+    Es una UNIÓN (`modelo OR sintaxis`), y esa dirección importa:
+
+    * Solo puede **añadir** detecciones, nunca quitarlas. Un modelo bueno sigue
+      detectando la pregunta sin signos («me preocupa la herida, no sé si es
+      normal») y esta función no le estorba — el docstring de `CAMPO_PREGUNTA` ya
+      argumentaba que `"?" in transcripcion` no basta, y sigue siendo cierto: por
+      eso se suma en vez de reemplazar.
+    * El coste de un falso positivo está acotado por el umbral de suficiencia: se
+      consulta el corpus, no alcanza el umbral, y el agente declara su límite. Se
+      paga una consulta al índice (decenas de ms) y una frase de más.
+    * El coste de un falso negativo es que la duda del paciente se ignore en
+      silencio, que es peor y es lo que estaba pasando.
+
+    Los dos disparadores son el signo de interrogación —que Whisper sí emite en
+    español— y un arranque interrogativo, para la transcripción que llega sin
+    puntuación.
+    """
+    texto = (transcripcion or "").strip()
+    if not texto:
+        return False
+    if _MARCA_INTERROGATIVA.search(texto):
+        return True
+    return bool(_ARRANQUES_DE_PREGUNTA.match(texto))
 
 
 def _sumar(a: int | None, b: int | None) -> int | None:

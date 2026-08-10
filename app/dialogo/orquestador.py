@@ -2,11 +2,20 @@
 
     audio -> STT -> transcripción
           -> EXTRACTOR (LLM #1) -> señales de dominio cerrado
+          -> [si hubo pregunta del paciente] RAG: recuperar + responder (LLM #3)
           -> Observacion acumulada
           -> politica.decidir(obs, presupuesto)   <- ÚNICO punto de decisión
           -> REPREGUNTAR: plantilla [+ REDACTOR (LLM #2), opcional]
              CLASIFICAR:  guion de cierre por clase
           -> TTS local -> audio
+
+El RAG entró en el sub-paso 3.2 y su sitio en este diagrama es la propiedad que
+hay que mirar: está **fuera** del camino que produce la decisión. Responde la
+pregunta del paciente y su texto se antepone como preámbulo a lo que la política
+mandó decir. No escribe en `llamada.senales`, no entra en `Observacion` y no
+puede llegar a `politica.decidir` por ninguna ruta. Lo verifica
+`tests/test_rag_no_altera_clase.py` reejecutando la política sobre las mismas
+señales con y sin RAG.
 
 El orden no es negociable, y las tres propiedades que compra están sostenidas
 por código de este archivo:
@@ -42,6 +51,7 @@ from app.dialogo import plantillas
 from app.dialogo.estado import Almacen, Llamada, ahora_iso
 from app.llm import redactor
 from app.llm.extractor import ContratoExtraccion, extraer
+from app.rag import recuperacion, respuesta as respuesta_rag
 from app.registro import anotar
 
 _log = logging.getLogger(__name__)
@@ -268,7 +278,20 @@ def procesar_turno(
     if extraccion.pregunta_del_paciente and stt.texto:
         llamada.preguntas_del_paciente.append(stt.texto)
 
-    # --- 4. Política: el único punto de decisión --------------------------- #
+    # --- 4. RAG: responder la pregunta del paciente, si la hubo ------------ #
+    # Fuera del camino de la decisión, a propósito: lo que salga de aquí es texto
+    # que se antepone a la respuesta, y no toca `llamada.senales` ni `obs`.
+    texto_rag = ""
+    bloque_rag: dict[str, Any] = {"consultas": 0, "citas": []}
+    ms_rag = 0.0
+    if extraccion.pregunta_del_paciente and stt.texto.strip():
+        texto_rag, bloque_rag, ms_rag, registro_llm_rag = _responder_pregunta(
+            cfg, servicios, stt.texto
+        )
+        if registro_llm_rag is not None:
+            registros_llm.append(registro_llm_rag)
+
+    # --- 5. Política: el único punto de decisión --------------------------- #
     obs = _observacion(llamada)
     presupuesto = _presupuesto(llamada)
     t_politica = time.perf_counter()
@@ -284,12 +307,15 @@ def procesar_turno(
         _log.error("politica.decidir rechazó la entrada: %s", exc)
     ms_politica = (time.perf_counter() - t_politica) * 1000
 
-    # --- 5. Respuesta: plantilla (+ redactor) o guion de cierre ------------- #
+    # --- 6. Respuesta: plantilla (+ redactor) o guion de cierre ------------- #
     preambulo: list[str] = []
     if not stt.texto.strip():
         preambulo.append(plantillas.SIN_TRANSCRIPCION)
     if extraccion.pregunta_del_paciente:
-        preambulo.append(plantillas.LIMITE_CLINICO)
+        # Con RAG, la respuesta sale del corpus o declara su límite. Sin RAG
+        # —índice no disponible, o `RAG_ACTIVO=0`— queda la declaración de rol de
+        # 3.1, que sigue siendo cierta: el agente no da indicaciones médicas.
+        preambulo.append(texto_rag or plantillas.LIMITE_CLINICO)
 
     ms_redaccion = 0.0
     fuente = redactor.FUENTE_PLANTILLA
@@ -320,7 +346,7 @@ def procesar_turno(
 
     respuesta = " ".join([*preambulo, cuerpo]).strip()
 
-    # --- 6. TTS local ------------------------------------------------------- #
+    # --- 7. TTS local ------------------------------------------------------- #
     audio_salida = servicios.sintetizar(respuesta)
     ms_total = (time.perf_counter() - inicio) * 1000
 
@@ -338,13 +364,13 @@ def procesar_turno(
                 "stt": round(stt.ms, 1),
                 "extraccion": round(extraccion.salida.ms, 1),
                 "politica": round(ms_politica, 3),
-                "rag": 0,
+                "rag": round(ms_rag, 1),
                 "redaccion": round(ms_redaccion, 1),
                 "tts": round(audio_salida.ms, 1),
             },
         },
         "llm": registros_llm,
-        "rag": {"consultas": 0, "citas": []},
+        "rag": bloque_rag,
         "politica": {
             "entrada": _observacion_a_json(obs),
             "presupuesto": _presupuesto_a_json(presupuesto),
@@ -384,6 +410,48 @@ def procesar_turno(
     )
 
     return _payload(llamada, decision, respuesta, fuente, audio_salida, registro)
+
+
+def _responder_pregunta(
+    cfg: Config, servicios: Servicios, consulta: str
+) -> tuple[str, dict[str, Any], float, dict[str, Any] | None]:
+    """Recupera del corpus y redacta la respuesta. Devuelve el bloque `rag`.
+
+    Tres salidas posibles, y las tres son honestas:
+
+    * **Sin índice** (`consultar_rag is None`, o `RAG_ACTIVO=0`): no hay bloque
+      que registrar y el llamador cae en la declaración de rol de 3.1.
+    * **Índice sin nada por encima del umbral**: se declara el límite
+      (`respuesta.SIN_FUENTE`) y el bloque queda con `suficiente: false` y el
+      `mejor_score` que se rechazó. Ese número es lo que permite después
+      distinguir «el umbral está mal puesto» de «el corpus no cubre el tema».
+    * **Fragmentos suficientes**: los redacta el modelo, y sus citas —ruta,
+      página, texto citado y score— viajan al registro.
+
+    El presupuesto de preguntas de la política NO se toca aquí: responder una
+    duda del paciente no consume ninguno de los `TOPE_GLOBAL` intentos de
+    indagación, porque no es una indagación.
+    """
+    if not cfg.rag_activo or servicios.consultar_rag is None:
+        return "", {"consultas": 0, "citas": []}, 0.0, None
+
+    inicio = time.perf_counter()
+    resultado = recuperacion.recuperar(
+        servicios.consultar_rag, consulta, k=cfg.rag_k, umbral=cfg.rag_umbral
+    )
+    texto, fuente, salida = respuesta_rag.responder(
+        servicios.completar,
+        consulta,
+        resultado.fragmentos,
+        timeout_ms=cfg.rag_timeout_ms,
+        max_tokens=cfg.rag_max_tokens,
+    )
+    bloque = resultado.a_registro(cfg.rag_max_texto_citado)
+    bloque["fuente"] = fuente
+    bloque["k"] = cfg.rag_k
+    ms = (time.perf_counter() - inicio) * 1000
+    registro_llm = salida.a_registro("rag") if salida.resultado != "no_invocado" else None
+    return texto, bloque, ms, registro_llm
 
 
 def _texto_de_cierre(decision: politica.Decision) -> str:

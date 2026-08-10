@@ -1074,3 +1074,177 @@ presupuesto agotado con señales AUSENTE. La conversación sí se cierra a la fu
 - `[ESPECULACIÓN]` La ruta remota (Llama 3.1 70B) no ha ejecutado un turno: sin
   clave. Con el fallback local en CPU el extractor domina el turno (7–11 s), que
   es el precio declarado de no depender de nadie.
+
+---
+
+## Sub-paso 3.2 — indexación, RAG con trazabilidad y consola (2026-08-10)
+
+### Lo que se entrega
+
+Indexador del corpus (`scripts/indexar_corpus.py`), paquete `app/rag/`,
+recuperación con umbral de suficiencia, respuestas al paciente con cita en
+`turnos.jsonl`, y consola de administración en `/consola` (compuerta G5). El
+cliente de voz se movió de `/consola` a `/llamada`: el README del reto reserva
+esa ruta para la consola y G5 se evalúa sobre ella.
+
+### La medición que manda, y lo que dice
+
+- `[HECHO]` **El embedder por defecto es monolingüe inglés y eso cuesta caro,
+  medido.** Mismas 18 consultas, mismo índice, cambiando solo el idioma:
+
+  | población | n | mín | mediana | máx |
+  |---|---|---|---|---|
+  | español · cubiertas | 10 | 0,638 | 0,706 | 0,783 |
+  | español · ajenas | 8 | 0,482 | 0,576 | 0,617 |
+  | inglés · cubiertas | 10 | 0,595 | 0,682 | 0,808 |
+  | inglés · ajenas | 8 | 0,209 | 0,275 | 0,455 |
+
+  Hueco: **español +0,021, inglés +0,141**. Las preguntas ajenas en inglés caen a
+  0,21 y en español se quedan en 0,48: el coseno en español mide sobre todo «esto
+  es texto en español». Comando y tabla completa en `docs/calibracion_rag.md`.
+
+- `[HECHO]` **El «10/10 escenario en top-5» es un proxy que miente.** Leyendo los
+  fragmentos: «¿cuánto dolor es normal tras apendicectomía?» devuelve estadística
+  epidemiológica; «¿qué signos de infección vigilo?» devuelve «utilice calzado
+  cerrado»; y en «¿cuándo puedo caminar?» el puesto 3 —score 0,676, por encima de
+  **todas** las consultas ajenas— es propaganda corporativa de Quirónsalud.
+
+- `[HECHO]` **Se probó recuperación híbrida y no arregla el español.** Fusión de
+  coseno con cobertura léxica ponderada por IDF (FTS5 de ChromaDB para las
+  frecuencias). Barrido de α: en inglés el hueco **mejora** de +0,141 a +0,205;
+  en español empeora de forma monótona hasta −0,303. La causa está medida: **el
+  IDF de un corpus monotemático invierte la informatividad** —`apendi` aparece en
+  648 fragmentos y `cuanto` en 194, así que el IDF pesa más «cuánto» que
+  «apendicectomía»—. Es un defecto del ORIGEN del IDF, no del método de fusión.
+
+- `[HECHO]` **Existe un caso donde ningún umbral funciona, y es el de G5.**
+  Documento subido a la consola, ajeno al corpus, consulta «¿en qué horario
+  atiende la línea Antares y a qué número llamo?»: el fragmento con la respuesta
+  literal puntúa **0,5988** y queda **debajo** de un ejercicio de rodilla sin
+  relación (0,6418) y debajo de la mejor consulta ajena (0,617). No es opinión,
+  es aritmética sobre números medidos. Con la fusión a α=0,5 el mismo caso se
+  ordena bien (0,6444 contra 0,3255), pero a ese α las poblaciones del corpus se
+  solapan.
+
+- `[DECISIÓN TOMADA]` **Se entrega `RAG_ALFA=0.5` y `RAG_UMBRAL=0.59`.** La
+  primera entrega usó denso puro con umbral 0,65 argumentando que era «el lado
+  seguro»; se corrigió el mismo día por dos razones, en este orden:
+
+  1. **Fallaba G5, que es eliminatoria.** Fallar una compuerta eliminatoria anula
+     el trabajo, no lo puntúa menos. Y no era ajustable: en denso puro no existe
+     ningún umbral que acepte la respuesta correcta (0,5988) y rechace las
+     consultas ajenas (hasta 0,617).
+  2. **La seguridad que compraba era nominal.** Se apoyaba en un hueco de 0,021
+     medido con **n = 18**, que está dentro del ruido de muestreo. El margen de
+     rechazo con la configuración nueva es **0,054** sobre la misma muestra: 0,536
+     de la peor consulta ajena contra el umbral 0,59.
+
+  Lo que se paga: 6 de 10 consultas cubiertas del corpus quedan por encima del
+  umbral en vez de 8, y las otras 4 reciben «no tengo el dato». **Ese es el error
+  que la rúbrica premia**; responder desde un fragmento irrelevante es el que
+  penaliza. El solape de las dos poblaciones (−0,094) se declara, no se esconde:
+  no hay umbral limpio, lo que se elige es en qué dirección fallar.
+
+  La salida de fondo —embedder multilingüe, ~120 MB en ONNX int8— no cabe en la
+  holgura de la imagen sin podar. Las dos configuraciones y sus números están en
+  `docs/calibracion_rag.md` §4.4 y §5.
+
+- `[HECHO]` **La segunda línea de defensa se reforzó al bajar el umbral.** Un
+  umbral más bajo deja pasar más fragmentos marginales al modelo, así que la
+  **primera** regla del prompt de generación pasó a ser declarar el límite, con
+  los tres modos de falla dichos explícitamente: fuentes del mismo tema que no
+  contestan, fuentes que solo rozan la pregunta, y completar con lo que el modelo
+  sabe por su cuenta. Antes iba subordinada dentro de otra regla. El umbral
+  resuelve «el corpus no habla del tema»; esto resuelve «habla del tema y aun así
+  no responde ESTA pregunta».
+
+### Descubrimientos del corpus que nadie había mirado
+
+- `[HECHO]` **El corpus trae duplicados que el hash no ve.** Con SHA-256 del texto
+  extraído: **cero**. Con solapamiento de shingles de 7 palabras: **dos pares**, a
+  Jaccard 0,9819 y 0,9709, y el siguiente par del corpus por debajo de 0,30. Lo
+  que los diferencia es el encabezado del editor (`Vol.:(0123456789)1 3` contra
+  `Vol:.(1234567890)`). Dos caracteres de maquetación.
+- `[HECHO]` **Un documento venía cifrado con AES y se perdía en silencio.**
+  `breast_cancer/Herramientas-Tecnica-Cancer-cuello-uterino-2018.pdf`: `pypdf`
+  falla con `DependencyError` y sus 14 páginas quedan fuera del índice sin aviso.
+  Se añadió `cryptography` (4,52 MB de rueda) en vez de descartarlo.
+- `[HECHO]` **El PDF escaneado se descarta explícitamente, con su nombre**, y no
+  se le hace OCR: sería un binario nativo y un modelo de idioma por un documento
+  cuyo tema cubren los otros 23 de su carpeta.
+
+### Dos bugs propios que conviene no repetir
+
+- `[HECHO]` **Un `Future` descartado se tragó un `TypeError` durante toda una
+  verificación de G5.** `run_in_executor` con argumentos posicionales contra una
+  firma con `keyword-only`: la ingesta reventaba y el documento se quedaba «en
+  cola» para siempre, sin nada en la consola. El arreglo no es solo el
+  `functools.partial`: es el `add_done_callback` que lleva cualquier fallo del
+  hilo al estado del documento.
+- `[HECHO]` **El test que lo habría atrapado existía y hacía `skip`.**
+  `tests/test_consola_documentos.py` dependía de `fastapi`, que era dependencia de
+  runtime y no estaba en `requirements-dev.txt`. **Un test que siempre se salta no
+  es un test: es un archivo.** Se añadieron `fastapi`, `httpx`,
+  `python-multipart` y `pypdf` a las dependencias de desarrollo, y al correr por
+  primera vez el test encontró además una carrera real entre el hilo de ingesta y
+  la consulta del inventario.
+- `[HECHO]` **El extractor local no marca las preguntas.** `llama3.2:3b` devolvió
+  `pregunta_del_paciente: false` ante «Doctor, ¿cómo debo cuidar la herida?», y
+  con esa marca como único detector **el RAG entero es inalcanzable en el perfil
+  de fallback**. Se añadió `hay_marca_de_pregunta`, un detector sintáctico que se
+  **une** al del modelo (nunca lo sustituye): solo puede añadir detecciones, y el
+  coste de un falso positivo está acotado por el umbral.
+
+### Decisiones que conviene no volver a discutir
+
+- **El índice viaja construido.** 1 274 s de CPU para 107 PDFs; construirlo al
+  arrancar es un servicio caído durante ese rato, justo cuando el evaluador mira
+  `/salud`. `indice_base/` entra por git y el entrypoint solo copia bytes.
+- **El troceo sale del embedder, no del gusto.** 256 tokens de truncamiento y una
+  tasa medida de 2,537 caracteres/token en el peor 5 % del español dan un techo de
+  649 caracteres; se eligió 600. El indexador verifica a posteriori cuántos trozos
+  se truncan (222 de 16 424, 1,35 %) y lo dice.
+- **RRF no sirve aquí, por primeros principios.** Conserva el orden y descarta la
+  magnitud; una consulta ajena también tiene un puesto 1. Con RRF no existe umbral
+  de suficiencia posible. Lo mismo vale para cualquier normalización relativa a la
+  consulta.
+- **El índice es NO bloqueante en `/salud`.** Sin él el agente pierde la capacidad
+  de responder preguntas y lo declara; la clasificación sigue intacta porque no
+  consulta el corpus. Hundir el veredicto diría «no sirve» de un sistema que sí
+  clasifica.
+- **«Disponible» se afirma contando fragmentos dentro del índice**, no por haber
+  terminado el bucle sin excepción. Son cosas distintas y la segunda miente.
+
+### Lo verificado, y con qué
+
+| Criterio | Resultado |
+|---|---|
+| `scripts/indexar_corpus.py` completo | 104/107 documentos, 16 424 fragmentos, 1 274,1 s, `indice_base/` 99,3 MB, mayor archivo 71,71 MB |
+| Ningún archivo del índice > 90 MB | OK (71,71 MB el mayor) |
+| `docker compose build` + `up -d` → `/salud` | **LISTO**, índice con **16 424** fragmentos reales |
+| Tabla de medición del embedder en español | Hecha, con su comando, en `docs/calibracion_rag.md` §4 |
+| **Ciclo G5 completo** (preguntar → subir → preguntar → eliminar → preguntar) | **PASA.** Límite declarado (0,3239) → 202 y `en cola → procesando → procesado y disponible` (2 págs., 3 fragmentos) → responde citando el documento (0,6499) → 3 fragmentos borrados, inventario vacío → límite declarado otra vez (0,3239, **idéntico** al de la fase 1) |
+| Consulta clínica en español con cita resoluble | OK: «Observa si hay aumento de la inflamación, aumento del dolor y enrojecimiento en la herida quirúrgica», cita p. 6/12 de `Recom endaciones Programa Reemplazo Articular de Rodilla.pdf` |
+| Consulta fuera del corpus declara su límite | OK, literal: «Sobre eso no tengo información en mis fuentes, así que prefiero no responderle de memoria» |
+| Bloque `rag` poblado en `turnos.jsonl` | OK: citas con ruta, página, texto citado, score, `score_denso`, `score_lexico`, `mejor_score`, `umbral`, `suficiente` |
+| Ninguna salida del RAG altera la clase | `tests/test_rag_no_altera_clase.py`, 8 tests, con corpus adversario |
+| `sh scripts/sin_rutas_absolutas.sh` | 0, sin avisos |
+| `python3 -m pytest tests/ -q` | **312 pasan, 1 skip** (232 antes de 3.2) |
+| Imagen comprimida | **326,0 MB** (`docker save … \| wc -c` → 325991424); holgura 74 MB |
+| `indice_base/` fuera de la imagen | OK, `/opt/indice_base` con 0 entradas |
+
+### Deuda que 3.2 deja abierta
+
+- `[HECHO]` **El embedder monolingüe sigue siendo el cuello de botella del RAG.**
+  La configuración entregada lo rodea con el canal léxico, no lo arregla: las dos
+  poblaciones del corpus se solapan (−0,094) y 4 de 10 consultas cubiertas caen
+  por debajo del umbral. La solución de fondo es un embedder multilingüe, que no
+  cabe en la holgura de imagen sin podar.
+- `[HECHO]` **El IDF debería venir de una colección de español general**, no del
+  propio corpus. Es lo que haría funcionar la fusión híbrida, y es un artefacto
+  nuevo que no se construyó.
+- `[HECHO]` **1,35 % de los trozos se truncan** por pasar de 256 tokens. Bajar
+  `RAG_TROZO_CARACTERES` lo reduce a costa de más fragmentos y más índice.
+- `[ESPECULACIÓN]` La ruta remota (Llama 3.1 70B) sigue sin ejecutar un turno con
+  RAG: sin clave. Con el modelo local, la redacción desde fragmentos tarda ~10 s y
+  obliga a `RAG_TIMEOUT_MS=30000` en el `.env` de desarrollo.

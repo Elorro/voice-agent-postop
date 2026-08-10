@@ -291,7 +291,10 @@ ni arranque de la reproducción.</p>
 <tr><td>Costo</td><td>{costo_txt}</td></tr>
 <tr><td>Audio transcrito</td><td>{consumo["segundos_audio_transcritos"]} s (costo no calculado: tarifa no declarada)</td></tr>
 <tr><td>Fuente de la respuesta</td><td>{html.escape(json.dumps(d["fuente_respuesta"], ensure_ascii=False))}</td></tr>
-<tr><td>RAG</td><td>{d["rag"]["consultas"]} consultas, {d["rag"]["citas"]} citas — {html.escape(d["rag"]["nota"])}</td></tr>
+<tr><td>RAG</td><td>{d["rag"]["consultas"]} consultas, {d["rag"]["citas"]} citas;
+{d["rag"]["respondidas_con_fuente"]} respondidas con fuente y
+{d["rag"]["limite_declarado"]} con límite declarado —
+{html.escape(d["rag"]["nota"])}</td></tr>
 </tbody></table>
 <footer><p><a href="/">Inicio</a> · <a href="/salud">Estado</a> ·
 <a href="/metricas?formato=json">esta página en JSON</a></p></footer>

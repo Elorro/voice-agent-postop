@@ -99,3 +99,21 @@ class Servicios:
     completar: Callable[..., SalidaLLM]
     sintetizar: Callable[[str], SalidaTTS]
     metadatos: dict[str, Any] = field(default_factory=dict)
+
+    consultar_rag: Callable[[str, int], Any] | None = None
+    """Recuperación sobre el corpus. `None` = sin índice disponible.
+
+    Entró en el sub-paso 3.2 y es **opcional a propósito**, con dos consecuencias
+    deliberadas:
+
+    * El turno funciona sin ella. Un índice que no abre degrada a «declaro mi
+      límite», no a llamada caída, y `/salud` dice por qué.
+    * La suite de tests sigue corriendo sin chromadb ni el modelo de embeddings:
+      quien quiera ejercitar el RAG inyecta una función que devuelve fragmentos
+      fijos, que además es la única forma de provocar a voluntad el caso que más
+      importa —el corpus no cubre la pregunta—.
+
+    La firma devuelve `Sequence[app.rag.tipos.Fragmento]`; se anota `Any` para no
+    importar el paquete `app.rag` desde aquí, que es el módulo de frontera y no
+    debe depender de nada.
+    """

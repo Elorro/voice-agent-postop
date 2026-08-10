@@ -16,3 +16,15 @@
 *.xlsx binary
 *.docx binary
 *.onnx binary
+
+# --- Índice vectorial (sub-paso 3.2) -----------------------------------------
+# `* text=auto` de arriba deja que git ADIVINE si un archivo es texto. La
+# heurística acierta con estos —todos traen bytes NUL— pero adivinar no es
+# garantizar, y lo que está en juego es que un clon en Windows reciba un índice
+# de 99 MB con los finales de línea convertidos, es decir corrupto. El síntoma
+# sería «el agente no encuentra nada» sin ningún error, que es el peor modo de
+# falla posible: el mismo que motivó este archivo, un nivel más abajo.
+indice_base/** binary
+*.sqlite3 binary
+*.bin binary
+*.pickle binary
