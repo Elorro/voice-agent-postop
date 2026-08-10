@@ -233,6 +233,7 @@ __marimo__/
 
 # Artefactos pesados (decidir en fase posterior si van versionados o restaurados)
 *.sqlite3
+!indice_base/*.sqlite3
 chroma_db/
 
 # Datos de ejecución del contenedor: índice vivo, subidas y logs. Se regeneran

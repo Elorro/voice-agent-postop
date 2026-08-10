@@ -2516,3 +2516,149 @@ levante, G4 la llamada y G5 la consola, y las tres caen con la misma descarga.
   cronometraje de F3.10 quedó invalidada por el caché local y la nueva solo
   necesita `docker image rm` previo. **Es lo único que separa a G2 de estar
   medida.**
+
+---
+
+## F3.12 — El índice no viajaba: un patrón genérico a 200 líneas del artefacto
+
+**El fallo.** `.gitignore` traía `*.sqlite3`, heredado de la plantilla de Python,
+y se tragaba **`indice_base/chroma.sqlite3`** — el catálogo de ChromaDB. Los
+otros 6 archivos del índice sí viajaban, así que un clon limpio arrancaba con
+**0 fragmentos**: el agente declaraba su límite ante toda pregunta y la consola
+de administración no tenía índice sobre el que operar. **RAG y G5 caídos.**
+
+- `[HECHO]` **Sin un solo error visible en el arranque.** El índice es **no
+  bloqueante a propósito** (README §3): sin él la clasificación clínica sigue
+  intacta, y hundir el veredicto ahí diría «el sistema no sirve» de un sistema
+  que sí clasifica. La contrapartida es esta: `/salud` daba **LISTO**, el
+  contenedor `healthy`, y el único síntoma era un agente que contestaba «no
+  tengo información sobre eso en mis fuentes» a todo.
+- `[HECHO]` **Se detectó en la corrida de cronometraje con usuario limpio, no
+  antes.** Ninguna prueba del repositorio podía verlo: la batería corre sobre el
+  árbol de trabajo, donde el archivo **sí está**. El fallo solo existe del otro
+  lado de un `git clone`.
+
+### La lección, que es lo único que impide la tercera vez
+
+**La comprobación válida es contar los archivos que hay en disco contra los que
+git ve. No es leer `.gitignore`.**
+
+Y no es una preferencia de estilo: leer `.gitignore` **no habría encontrado
+ninguno de los dos casos**, porque en los dos la regla era genérica y estaba
+lejos del artefacto que rompía.
+
+| | Fecha | Regla culpable | Distancia | Qué se perdió | Síntoma |
+|---|---|---|---|---|---|
+| **D1** | 2026-08-09 | `dataset/textos/` | otra sección del archivo | Los 107 PDFs del corpus | `git add dataset/` no commiteaba nada **y no avisaba** |
+| **F3.12** | 2026-08-10 | `*.sqlite3` | ~200 líneas | `indice_base/chroma.sqlite3` | Clon limpio con 0 fragmentos |
+
+Son **la misma familia**, y conviene nombrar en qué:
+
+1. **La regla es genérica.** `*.sqlite3` no contiene la cadena `chroma`, ni
+   `indice_base`, ni `RAG`. Buscar el nombre del artefacto en `.gitignore`
+   devuelve cero resultados en los dos casos.
+2. **La regla es preexistente y plausible.** Ninguna de las dos se escribió mal:
+   `dataset/textos/` era correcta cuando el corpus vivía fuera del repositorio, y
+   `*.sqlite3` es lo que trae cualquier plantilla de Python. Lo que cambió fue el
+   artefacto, no la regla.
+3. **El árbol de trabajo local está bien.** Todo funciona en la máquina donde se
+   desarrolla. El fallo solo existe al otro lado de un `git clone`, que es
+   exactamente donde nadie mira hasta la evaluación.
+4. **El sistema arranca igual.** Ni excepción, ni log, ni fila roja. Un artefacto
+   ausente es indistinguible de uno vacío para todo el código que lo consume.
+
+De ahí la forma de la compuerta: `find` contra `git ls-files`. No necesita
+entender la regla, ni que nadie recuerde revisarla, ni saber qué artefacto se
+añadió la semana pasada. Si los dos números difieren, algo no llega al clon.
+
+### `scripts/artefactos_completos.sh`
+
+- `[HECHO]` **Compara disco contra git para cada directorio declarado**
+  (`dataset/`, `indice_base/`), con el motivo de cada uno escrito arriba del
+  script: por qué debe viajar completo, para poder decidir dentro de seis meses
+  si la respuesta es añadir el archivo o sacar el directorio de la lista.
+- `[HECHO]` **Distingue las dos causas, que tienen arreglos distintos:**
+  `IGNORADO por: <archivo>:<línea>:<regla>` con la regla exacta, frente a
+  `SIN AÑADIR: ninguna regla lo ignora` cuando `.gitignore` ya está bien y lo que
+  falta es el `git add`.
+- `[CORRECCIÓN, y casi se cuela]` **La decisión «¿está ignorado?» usa
+  `check-ignore -q`, no `-v`.** `-v` sale **0 también cuando la regla que casa es
+  de NEGACIÓN** (`!indice_base/*.sqlite3`), es decir cuando el archivo **no**
+  está ignorado. La primera versión decidía con `-v` y reportaba
+  «ignorado por: !indice_base/*.sqlite3», que es justo lo contrario de lo que
+  pasaba — y habría mandado a tocar `.gitignore` cuando `.gitignore` ya estaba
+  bien. Comprobado el 2026-08-10: `-q` → 1, `-v` → 0, sobre el mismo archivo.
+- `[HECHO]` **Avisa por encima de 50 MiB y falla por encima de 95.** GitHub avisa
+  a partir de 50 y rechaza el push a partir de 100; el margen de 5 evita
+  descubrirlo con el push a medias. `chroma.sqlite3` son **71,7 MiB** y sale como
+  aviso, no como fallo.
+- `[HECHO]` **Dos detalles de implementación que daban falsos positivos**, los
+  dos por el corpus en español: `git ls-files` **cita** las rutas no ASCII
+  (`"dataset/textos/Recomendaci\303\263n.pdf"`), así que se lee con `-z`; y
+  `comm` valida el orden con la colación de **su** locale, así que el `sort` y el
+  `comm` van los dos con `LC_ALL=C` o aborta con «el fichero no está ordenado».
+- `[HECHO]` **Documentado en el README**, al lado de la compuerta de rutas
+  absolutas, con la instrucción de correrlo **antes de cada commit que toque
+  artefactos** y la tabla de los dos casos.
+
+### El arreglo de F3.12 está INCOMPLETO — y lo encontró la compuerta nueva
+
+- `[PENDIENTE — BLOQUEA G4 Y G5]` **F3.12 NO está en `main`: ni la regla ni el
+  archivo.** El arreglo se daba por commiteado y está entero en el árbol de
+  trabajo, sin llegar al índice de git. Estado medido el **2026-08-10**:
+
+  | Comprobación | Resultado |
+  |---|---|
+  | `git log -1 --format='%h %s'` | `fbd9cce [F3.11] release: digest publicado de v0.2.0` — **no hay commit de F3.12** |
+  | `git show HEAD:.gitignore \| grep sqlite3` | línea 235 `*.sqlite3`, **sin la negación** |
+  | `git ls-tree -r HEAD -- indice_base/` | **6 archivos**, sin `chroma.sqlite3` |
+  | `git diff -- .gitignore` | la línea `!indice_base/*.sqlite3` está **sin commitear** |
+  | `find indice_base -type f \| wc -l` | **7** |
+  | `git ls-files indice_base \| wc -l` | **6** |
+  | `git check-ignore -q indice_base/chroma.sqlite3` | exit **1** → en el árbol de trabajo ya no está ignorado |
+  | `git status --short` | `?? indice_base/chroma.sqlite3` |
+
+  Es decir: **un clon limpio de `main` hoy sigue arrancando con 0 fragmentos**, y
+  seguiría igual aunque se añadiera el archivo sin la regla, porque en HEAD el
+  `*.sqlite3` sin negación lo volvería a excluir. Los dos cambios van juntos o no
+  van. Es de Luis porque toca el índice de git:
+
+  ```bash
+  git add -- .gitignore indice_base/chroma.sqlite3
+  sh scripts/artefactos_completos.sh    # tiene que salir 0, con el aviso de 71,7 MiB
+  ```
+
+  **Que la compuerta haya encontrado esto en su primera corrida, sobre un arreglo
+  que se daba por cerrado, es el argumento entero a favor de tenerla** — y una
+  ilustración exacta de la lección: el árbol de trabajo local estaba bien, y por
+  eso nada de lo que se ejecuta en esta máquina podía notarlo.
+
+### Lo verificado, y con qué
+
+| Criterio | Resultado |
+|---|---|
+| `sh scripts/artefactos_completos.sh` | **exit 1**, correctamente: `indice_base` incompleto, con el aviso de 71,7 MiB. Saldrá 0 tras el `git add` |
+| Rama `SIN AÑADIR` | Ejercitada por el caso real de arriba |
+| Rama `IGNORADO` (la de antes de F3.12) | `cualquier_dir/chroma.sqlite3` → `IGNORADO por: .gitignore:235:*.sqlite3`. La regla genérica sigue viva y casa con `chroma.sqlite3` en cualquier directorio; lo único que salva a `indice_base/` es la negación de la línea 236 |
+| Camino OK de punta a punta | Copia del script con `ARTEFACTOS='dataset'` → `dataset: 111 en disco, 111 vistos por git` · **exit 0** |
+| `sh scripts/sin_rutas_absolutas.sh` | **0**, sin avisos |
+| `python3 -m pytest tests/ -q` | **371 pasan, 1 skip** (sin cambios: esto no toca código de la aplicación) |
+
+### Deuda que este cambio deja abierta
+
+- `[PENDIENTE]` **Commitear los DOS cambios de F3.12** —la negación en
+  `.gitignore` y `indice_base/chroma.sqlite3`— y volver a correr la compuerta.
+  Hasta entonces G4 y G5 siguen rotas para quien clone.
+- `[ESPECULACIÓN]` **La compuerta no se ejecuta sola.** Es un script que hay que
+  acordarse de correr, igual que `sin_rutas_absolutas.sh` — y el olvido es
+  exactamente el modo de fallo que las dos existen para cubrir. Un hook de
+  `pre-commit` lo automatizaría, pero los hooks no viajan en el clon y habría que
+  instalarlos a mano, así que tampoco cierran el hueco por sí solos.
+- `[HECHO]` **La lista de directorios es manual.** Un artefacto nuevo que deba
+  viajar completo no se protege hasta que alguien lo añada a `ARTEFACTOS`. Es
+  deliberado —una lista automática de «todo lo pesado» tendría falsos positivos
+  con `datos/`, que sí debe ignorarse— pero es un olvido posible más.
+- `[ESPECULACIÓN]` **Los 71,7 MiB de `chroma.sqlite3` no dejan sitio para otro
+  archivo igual.** El límite duro de GitHub son 100 MiB por archivo y el índice
+  crece con el corpus. Si el corpus se amplía, la semilla habrá que partirla o
+  dejar de versionarla, y eso cambia la ruta de arranque del jurado.

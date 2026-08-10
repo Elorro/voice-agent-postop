@@ -805,6 +805,42 @@ fechado**: documentan qué se corrió y dónde, y editarlos a posteriori sería
 falsear el registro. La deuda de la Fase 2.1 quedó saldada el 2026-08-09, así
 que hoy la compuerta sale limpia, sin avisos.
 
+### Compuerta de artefactos completos
+
+**Córrala antes de cada commit que toque `dataset/` o `indice_base/`.**
+
+```bash
+sh scripts/artefactos_completos.sh        # sale 0 si viajan completos, 1 si no
+sh scripts/artefactos_completos.sh -v     # además, el conteo por directorio
+```
+
+Compara, para cada directorio que **debe viajar completo por git**, los archivos
+que hay en disco (`find`) contra los que git ve (`git ls-files`). Si difieren,
+falla y lista los que no llegarían al clon, distinguiendo las dos causas —que
+tienen arreglos distintos—: **ignorado** por una regla de `.gitignore` (que
+muestra, con archivo y línea), o **sin añadir**, cuando ninguna regla lo excluye
+y solo falta el `git add`. Avisa además de archivos por encima de **50 MiB** y
+falla por encima de **95**, porque GitHub avisa a partir de 50 y rechaza el push
+a partir de 100.
+
+**Por qué existe, y por qué no basta con leer `.gitignore`.** Este mecanismo ha
+roto la entrega dos veces:
+
+| | Regla | Qué se perdió | Síntoma |
+|---|---|---|---|
+| **D1** (2026-08-09) | `dataset/textos/` | Los 107 PDFs del corpus | `git add dataset/` no commiteaba nada y no avisaba |
+| **F3.12** (2026-08-10) | `*.sqlite3` | `indice_base/chroma.sqlite3`, el catálogo de ChromaDB | Clon limpio con **0 fragmentos**: RAG y G5 caídos |
+
+En los dos casos la regla era **genérica** y estaba a doscientas líneas del
+artefacto que rompía: `*.sqlite3` no menciona `chroma`, ni `indice_base`, ni
+`RAG`. Buscar el nombre del artefacto en `.gitignore` no encuentra nada. Y el
+síntoma es el peor posible: **el sistema arranca igual**, sin excepción, sin log
+y sin fila roja en `/salud` —el índice es no bloqueante a propósito—; solo un
+agente que responde «no tengo información sobre eso en mis fuentes» a todo.
+
+La comprobación que sí vale es **contar los archivos de disco contra los que git
+ve**, que no depende de entender la regla ni de que nadie se acuerde de mirarla.
+
 ### Estructura
 
 ```
