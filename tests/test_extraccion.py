@@ -189,6 +189,25 @@ def test_parsea_json_con_valla_de_codigo_y_texto_alrededor() -> None:
     assert parsear_json("[1, 2, 3]") is None
 
 
+def test_parsea_json_con_una_llave_de_mas_al_final() -> None:
+    """Regresión medida el 2026-08-10 contra `models/gemini-3.5-flash`: cierra
+    bien el objeto y añade una `}` suelta detrás. El parser usaba un regex
+    greedy `\\{.*\\}` que llegaba hasta esa última llave y hacía fallar un JSON
+    que estaba bien formado. Un turno perdido por un carácter."""
+    salida_real = (
+        '{\n  "herida": null,\n  "sueno": {"valor": "levemente_alterado",\n'
+        '  "cita": "no he pasado muy bien la noche"},\n'
+        '  "pregunta_del_paciente": false\n}\n}'
+    )
+    datos = parsear_json(salida_real)
+    assert datos is not None
+    assert datos["sueno"]["valor"] == "levemente_alterado"
+    assert datos["pregunta_del_paciente"] is False
+
+    # Y lo de siempre sigue funcionando: basura textual detrás del objeto.
+    assert parsear_json('{"dolor_nrs": 3} y eso es todo') == {"dolor_nrs": 3}
+
+
 def test_json_invalido_reintenta_una_vez_y_luego_todo_ausente() -> None:
     extraccion = extraer(
         responder("no soy json", "sigo sin serlo"),
@@ -219,6 +238,42 @@ def test_el_reintento_acumula_los_tokens_de_los_dos_intentos() -> None:
     assert extraccion.senales["herida"] == "normal"
     assert extraccion.salida.tokens_in == 60
     assert extraccion.salida.reintentos == 1
+
+
+def test_la_extraccion_degradada_conserva_la_cuenta_de_429() -> None:
+    """Regresión: el extractor recompone la `SalidaLLM` por posición, y en esa
+    recomposición se perdían `reintentos_429` y `espera_reintento_ms`. El
+    síntoma era un registro que decía «0 reintentos» sobre un turno que había
+    esperado dos veces al proveedor, es decir una latencia sin explicación.
+    """
+
+    def completar(mensajes, **kwargs) -> SalidaLLM:
+        return SalidaLLM(
+            "", 1500.0, ERROR, "modelo-de-prueba",
+            reintentos_429=2, espera_reintento_ms=717.7,
+        )
+
+    extraccion = extraer(completar, CONTRATO, "me duele", "dolor_nrs", timeout_ms=1000)
+
+    assert extraccion.todo_ausente
+    assert extraccion.salida.reintentos_429 == 2
+    assert extraccion.salida.espera_reintento_ms == pytest.approx(717.7)
+    assert extraccion.salida.a_registro("extractor")["reintentos_429"] == 2
+
+
+def test_la_extraccion_exitosa_tambien_conserva_la_cuenta_de_429() -> None:
+    def completar(mensajes, **kwargs) -> SalidaLLM:
+        return SalidaLLM(
+            json.dumps({"dolor_nrs": {"valor": 4, "cita": "un cuatro"}}),
+            900.0, OK, "modelo-de-prueba", 30, 10,
+            reintentos_429=1, espera_reintento_ms=250.0,
+        )
+
+    extraccion = extraer(completar, CONTRATO, "un cuatro", "dolor_nrs", timeout_ms=1000)
+
+    assert extraccion.senales["dolor_nrs"] == 4
+    assert extraccion.salida.reintentos_429 == 1
+    assert extraccion.salida.espera_reintento_ms == pytest.approx(250.0)
 
 
 def test_json_valido_al_primer_intento_no_reintenta() -> None:
@@ -386,3 +441,79 @@ def test_la_pregunta_sobrevive_a_la_degradacion_del_extractor() -> None:
     assert salida.resultado == TIMEOUT
     assert salida.todo_ausente
     assert salida.pregunta_del_paciente is True
+
+
+# --------------------------------------------------------------------------- #
+# Números desnudos: respuestas elípticas de un paciente que sí colabora
+# --------------------------------------------------------------------------- #
+# Las cuatro transcripciones son LITERALES de la primera llamada real por
+# navegador (llamada c50e671845a8, 2026-08-10). En esa llamada las cuatro se
+# perdieron, pero NO por el extractor: los cuatro turnos murieron en HTTP 429 y
+# el modelo nunca las vio (bitácora F3.6). Quedan aquí fijadas porque son el
+# patrón central de la capa 2 del dataset —pacientes evasivos que contestan con
+# fragmentos— y porque un cambio futuro del prompt o del validador no puede
+# romperlas en silencio.
+def test_temperatura_dicha_como_numero_desnudo_en_una_frase() -> None:
+    extraccion = extraer(
+        responder(json.dumps({"fiebre_c": {"valor": 36, "cita": "está en 36"}})),
+        CONTRATO,
+        "En este momento está en 36.",
+        "fiebre_c",
+        timeout_ms=1000,
+    )
+    assert extraccion.resultado == OK
+    assert extraccion.senales["fiebre_c"] == 36.0
+    assert extraccion.evidencias["fiebre_c"] == "está en 36"
+
+
+def test_temperatura_dicha_como_numero_a_secas() -> None:
+    """La transcripción entera es «36». La cita literal posible es «36»."""
+    extraccion = extraer(
+        responder(json.dumps({"fiebre_c": {"valor": 36, "cita": "36"}})),
+        CONTRATO,
+        "36",
+        "fiebre_c",
+        timeout_ms=1000,
+    )
+    assert extraccion.senales["fiebre_c"] == 36.0
+
+
+def test_dolor_dicho_con_letras_y_punto() -> None:
+    """«Siete.» contra la cita «Siete»: la puntuación no puede tumbar la cita,
+    y por eso `normalizar` la quita antes de comparar."""
+    extraccion = extraer(
+        responder(json.dumps({"dolor_nrs": {"valor": 7, "cita": "Siete"}})),
+        CONTRATO,
+        "Siete.",
+        "dolor_nrs",
+        timeout_ms=1000,
+    )
+    assert extraccion.senales["dolor_nrs"] == 7
+
+
+def test_dolor_con_el_numero_repetido_por_el_stt() -> None:
+    """El STT entregó «7 7» por un «siete» repetido. El valor es 7, no 77: el
+    modelo tiene que leerlo como repetición y la cita respalda el fragmento."""
+    extraccion = extraer(
+        responder(json.dumps({"dolor_nrs": {"valor": 7, "cita": "7 7"}})),
+        CONTRATO,
+        "7 7",
+        "dolor_nrs",
+        timeout_ms=1000,
+    )
+    assert extraccion.senales["dolor_nrs"] == 7
+
+
+def test_un_numero_desnudo_sin_cita_en_la_transcripcion_sigue_cayendo() -> None:
+    """El contrapeso de los cuatro anteriores, y la razón de que la validación
+    por cita NO se relaje: si el modelo devuelve un 7 plausible cuyo respaldo no
+    está en lo que el paciente dijo, la señal se cae igual."""
+    extraccion = extraer(
+        responder(json.dumps({"dolor_nrs": {"valor": 7, "cita": "siete de diez"}})),
+        CONTRATO,
+        "36",
+        "dolor_nrs",
+        timeout_ms=1000,
+    )
+    assert extraccion.senales["dolor_nrs"] is None
+    assert extraccion.todo_ausente

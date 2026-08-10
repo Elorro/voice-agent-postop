@@ -5,11 +5,25 @@
     "identificador aparece en `modelos_sin_tarifa` de /metricas. Un cero implícito",
     "sería peor que un hueco declarado: parecería medido.",
     "Unidades: USD por millón de tokens. Cada entrada trae su fuente y la fecha en",
-    "que se consultó; sin las dos, la entrada no debe existir."
+    "que se consultó; sin las dos, la entrada no debe existir.",
+    "",
+    "LA COLUMNA `salida` INCLUYE LOS TOKENS DE RAZONAMIENTO. La tabla de precios",
+    "de Google titula esa columna «Precio de salida (incluidos los tokens de",
+    "pensamiento)», y el proveedor NO los mete en `completion_tokens`. Por eso",
+    "app/registro.py::costo_de_uso factura `out + razonamiento`, no `out`. Con la",
+    "llamada medida el 2026-08-10 ignorarlos subestimaba el costo de salida un 44%."
   ],
   "moneda": "USD",
   "unidad": "usd_por_millon_de_tokens",
   "modelos": {
+    "models/gemini-3.6-flash": {
+      "entrada": 1.5,
+      "salida": 7.5,
+      "nivel": "estándar de pago",
+      "fuente": "https://ai.google.dev/pricing",
+      "fecha_consulta": "2026-08-10",
+      "nota": "Ruta principal (perfil A) declarada en docs/DECLARACION_MODELO.md. La columna de salida es la de Google, que dice literal «Precio de salida (incluidos los tokens de pensamiento)»: por eso el cálculo factura out + razonamiento. NO es la tarifa del nivel gratuito, cuyo costo monetario es cero pero cuyo contenido Google usa para mejorar sus productos."
+    },
     "meta-llama/llama-3.1-70b-instruct": {
       "entrada": 0.4,
       "salida": 0.4,

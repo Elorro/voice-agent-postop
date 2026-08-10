@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.config import Config, cargar_config
-from app.contratos import OK, TIMEOUT, SalidaLLM, SalidaSTT, SalidaTTS, Servicios
+from app.contratos import ERROR, OK, TIMEOUT, SalidaLLM, SalidaSTT, SalidaTTS, Servicios
 from app.llm.redactor import PROMPT_SISTEMA as PROMPT_REDACTOR
 from app.rag.respuesta import PROMPT_SISTEMA as PROMPT_RAG
 from app.rag.tipos import Fragmento
@@ -76,6 +76,12 @@ class LLMFalso:
     """
 
     respuestas_extractor: list[str] = field(default_factory=list)
+    # Proveedor caído / lento PARA EL EXTRACTOR. Es la ruta que en producción
+    # solo aparece con el proveedor real fuera de servicio, y la que distingue
+    # «el paciente no supo contestar» de «el agente no pudo preguntarle al
+    # modelo» — la distinción que sostiene la enmienda a HD7.
+    extractor_error: bool = False
+    extractor_timeout: bool = False
     respuesta_redactor: str | None = None
     redactor_timeout: bool = False
     respuesta_rag: str | None = None
@@ -122,6 +128,11 @@ class LLMFalso:
                 texto = mensajes[-1]["content"]
             return SalidaLLM(texto, 5.0, OK, self.modelo, self.tokens_in, self.tokens_out)
 
+        if self.extractor_timeout:
+            return SalidaLLM("", float(timeout_ms), TIMEOUT, self.modelo)
+        if self.extractor_error:
+            return SalidaLLM("", 12.0, ERROR, self.modelo, detalle="429 de prueba")
+
         if self.respuestas_extractor:
             texto = (
                 self.respuestas_extractor.pop(0)
@@ -133,11 +144,21 @@ class LLMFalso:
         return SalidaLLM(texto, 7.0, OK, self.modelo, self.tokens_in, self.tokens_out)
 
 
-def stt_fijo(guion: list[str]) -> Callable[[bytes, str], SalidaSTT]:
-    """Transcripciones en orden; agotado el guion, devuelve cadena vacía."""
+def stt_fijo(
+    guion: list[str], *, resultado: str = OK
+) -> Callable[[bytes, str], SalidaSTT]:
+    """Transcripciones en orden; agotado el guion, devuelve cadena vacía.
+
+    `resultado` permite simular el proveedor de transcripción caído o lento.
+    Con `error`/`timeout` el texto sale vacío **y** el resultado lo declara, que
+    es justo lo que distingue «el agente no oyó» de «el paciente calló»: el
+    silencio del paciente es texto vacío con `resultado` en `ok`.
+    """
     pendientes = list(guion)
 
     def transcribir(audio: bytes, nombre: str = "turno.webm", segundos: float | None = None):
+        if resultado != OK:
+            return SalidaSTT("", 3.0, resultado, segundos, detalle="proveedor de prueba")
         texto = pendientes.pop(0) if pendientes else ""
         return SalidaSTT(texto, 3.0, OK, segundos)
 
@@ -193,9 +214,11 @@ def servicios(
     transcripciones: list[str],
     dichos: list[str] | None = None,
     consultar_rag: Callable[[str, int], list[Fragmento]] | None = None,
+    *,
+    stt_resultado: str = OK,
 ) -> Servicios:
     return Servicios(
-        transcribir=stt_fijo(transcripciones),
+        transcribir=stt_fijo(transcripciones, resultado=stt_resultado),
         completar=llm.completar,
         sintetizar=tts_falso(dichos),
         consultar_rag=consultar_rag,

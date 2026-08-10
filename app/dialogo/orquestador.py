@@ -46,7 +46,7 @@ from typing import Any
 import politica
 
 from app.config import Config
-from app.contratos import SalidaTTS, Servicios
+from app.contratos import ERROR, TIMEOUT, SalidaTTS, Servicios
 from app.dialogo import plantillas
 from app.dialogo.estado import Almacen, Llamada, ahora_iso
 from app.llm import redactor
@@ -256,6 +256,7 @@ def procesar_turno(
 
     # --- 1. STT ------------------------------------------------------------ #
     stt = servicios.transcribir(audio_entrada, nombre_archivo)
+    llamada.anotar_stt(stt.resultado)
 
     # --- 2. Extractor (LLM #1) --------------------------------------------- #
     extraccion = extraer(
@@ -267,6 +268,7 @@ def procesar_turno(
     )
     if extraccion.salida.resultado != "no_invocado":
         registros_llm.append(extraccion.salida.a_registro("extractor"))
+    llamada.anotar_extraccion(extraccion.resultado)
 
     # --- 3. Observación acumulada ------------------------------------------ #
     # Un valor nuevo pisa al anterior (el paciente puede corregirse); un AUSENTE
@@ -329,7 +331,32 @@ def procesar_turno(
         base = plantillas.repregunta(senal, llamada.gastadas(senal))
         # Se cobra AL EMITIR: el turno que sigue verá el presupuesto ya gastado
         # aunque el paciente no conteste.
-        llamada.cobrar_pregunta(senal)
+        #
+        # ENMIENDA A HD7 (2026-08-10, llamada c50e671845a8): NO se cobra si este
+        # turno no llegó a procesarse por fallo de UNO DE LOS DOS PROVEEDORES
+        # —el STT que oye al paciente, o el LLM que interpreta lo oído—.
+        #
+        # El presupuesto acota cuánto se le insiste AL PACIENTE, y un turno en
+        # que el agente no pudo oírlo o no pudo consultar al modelo no es
+        # insistencia: al paciente no se le preguntó de más, falló el agente.
+        # Cobrarlo convierte una caída de proveedor en un ROJO por AGOTAMIENTO
+        # para cualquier paciente, incluido uno verde, y eso no es conservador:
+        # es ruido que entierra las alertas reales.
+        #
+        # Lo que SÍ cobra, y es lo que impide que esto sea una puerta trasera:
+        #
+        # * `json_invalido` — el modelo respondió, la extracción ocurrió, y lo
+        #   que falló fue la calidad de la respuesta.
+        # * **El silencio del paciente** — transcripción vacía con el STT en
+        #   `ok` significa que el agente oyó bien y no había nada que oír. Ahí el
+        #   paciente sí fue interrogado y sí calló, que es exactamente el caso
+        #   que HD7 existía para acotar.
+        fallo_del_agente = (
+            stt.resultado in (ERROR, TIMEOUT)
+            or extraccion.resultado in (ERROR, TIMEOUT)
+        )
+        if not fallo_del_agente:
+            llamada.cobrar_pregunta(senal)
         llamada.senal_pendiente = senal
         cuerpo, fuente, salida_redactor = redactor.redactar(
             servicios.completar,
@@ -538,6 +565,10 @@ def cerrar_llamada(
                     "tope_global": TOPE_GLOBAL,
                     "tope_por_senal": TOPE_POR_SENAL,
                 },
+                # Viaja al lado del criterio a propósito: un AGOTAMIENTO con
+                # `turnos_sin_llm_real > 0` no significa lo mismo que uno limpio,
+                # y quien lea el cierre tiene que verlo sin ir a buscarlo.
+                "degradacion": llamada.degradacion(),
                 "totales": resumen,
             },
         )
@@ -556,6 +587,7 @@ def cerrar_llamada(
             "tope_global": TOPE_GLOBAL,
             "tope_por_senal": TOPE_POR_SENAL,
         },
+        "degradacion": llamada.degradacion(),
         "totales": resumen,
         "historial": llamada.historial,
         "preguntas_del_paciente": llamada.preguntas_del_paciente,
@@ -565,12 +597,13 @@ def cerrar_llamada(
 
 def _totales_de_llamada(cfg: Config, llamada_id: str, lineas: Any) -> dict[str, Any]:
     """Totales de una llamada, releídos del registro."""
-    from app.registro import cargar_tarifas
+    from app.registro import cargar_tarifas, costo_de_uso
 
     tarifas = cargar_tarifas(cfg)
     turnos = 0
     tokens_in = 0
     tokens_out = 0
+    tokens_razonamiento = 0
     invocaciones: dict[str, int] = {}
     por_modelo: dict[str, dict[str, int]] = {}
     consultas_rag = 0
@@ -588,13 +621,16 @@ def _totales_de_llamada(cfg: Config, llamada_id: str, lineas: Any) -> dict[str, 
             rol = str(llamado.get("rol", "?"))
             invocaciones[rol] = invocaciones.get(rol, 0) + 1
             modelo = str(llamado.get("modelo") or "(sin modelo)")
-            acumulado = por_modelo.setdefault(modelo, {"in": 0, "out": 0})
+            acumulado = por_modelo.setdefault(modelo, {"in": 0, "out": 0, "razonamiento": 0})
             if isinstance(llamado.get("tokens_in"), int):
                 tokens_in += llamado["tokens_in"]
                 acumulado["in"] += llamado["tokens_in"]
             if isinstance(llamado.get("tokens_out"), int):
                 tokens_out += llamado["tokens_out"]
                 acumulado["out"] += llamado["tokens_out"]
+            if isinstance(llamado.get("tokens_razonamiento"), int):
+                tokens_razonamiento += llamado["tokens_razonamiento"]
+                acumulado["razonamiento"] += llamado["tokens_razonamiento"]
         rag = linea.get("rag") or {}
         consultas_rag += int(rag.get("consultas") or 0)
         citas_rag += len(rag.get("citas") or [])
@@ -609,8 +645,7 @@ def _totales_de_llamada(cfg: Config, llamada_id: str, lineas: Any) -> dict[str, 
         if not tarifa:
             sin_tarifa.append(modelo)
             continue
-        costo += uso["in"] / 1e6 * float(tarifa.get("entrada", 0.0))
-        costo += uso["out"] / 1e6 * float(tarifa.get("salida", 0.0))
+        costo += costo_de_uso(uso, tarifa)
 
     from app.registro import percentil
 
@@ -618,6 +653,9 @@ def _totales_de_llamada(cfg: Config, llamada_id: str, lineas: Any) -> dict[str, 
         "turnos": turnos,
         "tokens_entrada": tokens_in,
         "tokens_salida": tokens_out,
+        # Generados y facturados como salida, pero fuera de `tokens_salida`
+        # porque el proveedor no los pone en `completion_tokens`.
+        "tokens_razonamiento": tokens_razonamiento,
         "invocaciones_llm": invocaciones,
         "por_modelo": por_modelo,
         "consultas_rag": consultas_rag,

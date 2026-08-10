@@ -179,7 +179,7 @@ Lo que debe ver hoy, con la clave puesta:
 | Índice vectorial | OK (no bloqueante) | `N fragmentos en «corpus_postop» (corpus: …, subido: …); umbral de suficiencia 0.59, k=5` |
 | Embedder | OK | `cargado, 384 dimensiones` |
 | Voz (Piper) | OK | `es_MX-ald-medium.onnx cargado (es_MX, 22050 Hz)` |
-| LLM (modelo de lenguaje) | OK | `«meta-llama/llama-3.1-70b-instruct» servido y alcanzable (… ms) · perfil «remoto»` |
+| LLM (modelo de lenguaje) | OK | `«<el modelo del perfil A>» servido y alcanzable (… ms) · perfil «remoto»` |
 | STT (transcripción) | OK | `«whisper-large-v3» servido y alcanzable (… ms) · whisper-large-v3 en https://api.groq.com/openai/v1` |
 | Directorios de escritura | OK | `logs, subidos e índice son escribibles` |
 | Dataset | OK o AVISO | AVISO si no montó el dataset; no bloquea |
@@ -223,34 +223,121 @@ y mudo. Mire la página.
 Las claves son lo único que este repositorio **no** trae. Son **dos**, porque
 son dos servicios:
 
-| Variable | Servicio | Proveedor |
+| Variable | Servicio | Proveedor | Marcador en `.env.example` |
+|---|---|---|---|
+| `LLM_API_KEY` | Modelo de lenguaje | Google (perfil A, activo) | `aqui_la_api_key_del_llm_(gemini)` |
+| `STT_API_KEY` | Transcripción de voz | Groq (`whisper-large-v3`) | `aqui_la_api_key_de_groq_(whisper)` |
+
+Los dos marcadores están escritos con ese texto **dentro** de `.env.example`, y
+el archivo abre con un recuadro que los repite. Pegue la clave encima del
+marcador; no hay una tercera cosa que tocar.
+
+### Cómo conseguir la clave del LLM — cree la suya, es lo recomendado
+
+**Camino principal: cree su propia clave de Google.** Es gratuita e instantánea,
+no pide tarjeta, y le da un **cubo de cuota limpio**:
+
+<https://aistudio.google.com/apikey>
+
+Péguela en `LLM_API_KEY=`. Ese es el camino recomendado y no hay que tocar nada
+más.
+
+> **Por qué su propia clave y no la del informe.** El nivel gratuito de Google
+> concede **20 peticiones por día y por modelo**
+> (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, verificado contra el
+> endpoint el **2026-08-10**). Una llamada de seis turnos gasta **once**. Con una
+> clave compartida entre varias personas, el cubo del día se agota antes de que
+> le toque a usted, y el síntoma es `HTTP 429` en mitad de la llamada. Con clave
+> propia el problema no existe.
+>
+> El límite es **por modelo**, así que si agota un modelo puede cambiar
+> `LLM_MODELO` por otro de la lista de `.env.example` y seguir con el mismo cubo
+> intacto de ese otro modelo.
+
+**Alternativa: la clave del informe final.** Viene en el informe, no en el
+repositorio ni lo estará —una clave en git es una clave quemada—. Sirve, pero
+**su cuota diaria puede estar consumida** por otros usos del mismo día. Si ve
+`429`, cree la suya con el enlace de arriba.
+
+**Sin ninguna clave de LLM:** el **perfil C** corre `llama3.2:3b` en local, sin
+cuota, sin clave y sin red. Ver §4 más abajo.
+
+> **Antes de usar su clave: qué hace Google con lo que le manda.**
+> Los términos de la API de Gemini (<https://ai.google.dev/gemini-api/terms>,
+> consultados el **2026-08-10**) distinguen dos regímenes, y la diferencia no es
+> de matiz:
+>
+> | | Qué dicen los términos |
+> |---|---|
+> | **Nivel gratuito** (*Unpaid Services*) | «Google uses the content you submit to the Services and any generated responses to provide, improve, and develop Google products». **Revisores humanos pueden leer** entradas y salidas |
+> | **Nivel de pago** (*Paid Services*, con facturación activa) | «Google doesn't use your prompts […] or responses to improve our products». Los datos se registran brevemente solo para detectar violaciones de políticas |
+>
+> **Excepción:** en el Espacio Económico Europeo, Suiza y Reino Unido se aplican
+> los términos de *Paid Services* **aunque el servicio sea gratuito**.
+>
+> **En este repositorio el dataset es sintético** y las conversaciones de prueba
+> también, así que no hay dato clínico real en juego. Se dice aquí igualmente
+> porque la decisión de qué clave usar es del evaluador, y para tomarla hace
+> falta saberlo. **Si alguna vez se apuntara este agente a voz de pacientes
+> reales, el nivel gratuito quedaría descartado** y el perfil C —local, sin red—
+> sería la única ruta que no envía nada a un tercero.
+
+### La clave del STT (Groq)
+
+No cambia y no tiene este problema: su límite es holgado.
+<https://console.groq.com/keys> → **Create API Key**. Empieza por `gsk_` y
+**solo se muestra una vez**. Péguela en `STT_API_KEY=`.
+
+### Por qué el LLM no es Groq, y por qué el principal es Gemini
+
+Groq apagó los dos modelos de la lista permitida que servía: uno el
+**24/01/2025** y el otro el **16/08/2026**. Google apagó Gemini 1.5 el
+**29/09/2025**. Consultada la organización, su respuesta escrita del
+**2026-08-09** fue migrar «hacia las versiones o iteraciones más recientes
+liberadas por los proveedores de dichos modelos (sucesores de los modelos)»
+—cita completa en la declaración—, y eso es el perfil A.
+
+Hay **tres perfiles** en `.env.example`, en este orden:
+
+| Perfil | Modelo | Por qué está |
 |---|---|---|
-| `LLM_API_KEY` | Modelo de lenguaje | El que sirva `LLM_MODELO`. Por defecto en `.env.example`: OpenRouter |
-| `STT_API_KEY` | Transcripción de voz | Groq (`whisper-large-v3`) |
+| **A** (activo) | `models/gemini-3.6-flash`, sucesor de Gemini 1.5 Flash | Autorizado por escrito. No obliga a descargar pesos (~2 GB menos) y es la ruta rápida: **1,1–1,6 s por extracción medidos** (§9.2) frente a los 7-15 s del perfil C en CPU. Contra: **20 peticiones/día por modelo** en el nivel gratuito |
+| **B** (alterna) | Llama 3.1 70B, proveedor OpenAI-compatible | El modelo **literal** de la lista. **Requiere saldo**, y por eso no es la principal |
+| **C** (fallback) | Llama 3.2 3b local | Celda «Local, CPU» de la lista. Sin clave, sin saldo, sin red. Empaquetado y probado |
 
-**Para la evaluación: las claves vienen en el informe final.** No están en el
-repositorio ni lo estarán: una clave en git es una clave quemada.
+Cambiar de perfil es comentar unas líneas y descomentar otras. **El timeout del
+extractor viaja dentro de cada perfil** (2500 ms remoto, 20000 ms local) porque
+es lo primero que se olvida al cambiar y lo que rompe el turno cuando se olvida.
 
-### Por qué el LLM no es Groq
-
-Porque Groq apagó los dos modelos de la lista permitida que servía: uno el
-**24/01/2025** y el otro el **16/08/2026**. La solución conserva el
-modelo exigido —Llama 3.1 70B— y lo pide a un proveedor que sí lo sirve. El
-argumento completo, con fuentes y fechas de consulta, está en
+El argumento completo, con fuentes y fechas de consulta, está en
 **[`docs/DECLARACION_MODELO.md`](docs/DECLARACION_MODELO.md)**. El STT no está
 afectado y sigue en Groq.
 
 ### Contingencia, fuera del cronómetro
 
-Si una clave del informe no funciona o se agotó su cuota:
+Si una clave no funciona o se agotó su cuota:
+
+- **LLM: `HTTP 429` a mitad de la llamada.** Es el límite diario de **20
+  peticiones por modelo** del nivel gratuito. Dos salidas, en este orden:
+  1. **Cambie de modelo.** La cuota es por modelo, así que otro identificador de
+     la lista de `.env.example` trae su cubo intacto. Es una línea:
+     `LLM_MODELO=`.
+  2. **Cree su propia clave** en <https://aistudio.google.com/apikey> si estaba
+     usando la del informe. Gratis, instantánea, cubo limpio.
+
+  Para ver qué modelos sirve su clave:
+
+  ```bash
+  curl -s "https://generativelanguage.googleapis.com/v1beta/openai/models" \
+    -H "Authorization: Bearer $CLAVE" | grep -o '"id":"[^"]*"'
+  ```
 
 - **STT (Groq).** Entre a <https://console.groq.com>, regístrese, **API Keys** →
   **Create API Key**. La clave empieza por `gsk_` y **solo se muestra una vez**.
   Péguela en `STT_API_KEY=`, sin comillas y sin espacios alrededor del `=`. El
   plan gratuito basta para la demostración.
-- **LLM.** Cree una clave en el proveedor que aparece en `.env.example` y
-  péguela en `LLM_API_KEY=`. O evite el problema entero con el **fallback
-  local**, que no necesita clave ni internet:
+- **O cambie de perfil.** El **B** es Llama 3.1 70B en otro proveedor (necesita
+  saldo); el **C** es el **fallback local**, que no necesita clave ni internet:
 
   ```bash
   docker compose --profile local up -d
@@ -258,7 +345,14 @@ Si una clave del informe no funciona o se agotó su cuota:
   ```
 
   y en `.env`: `LLM_BASE_URL=http://llm-local:11434/v1`, `LLM_MODELO=llama3.2:3b`,
-  `LLM_PERFIL=local`, `LLM_API_KEY=` vacía.
+  `LLM_PERFIL=local`, `LLM_API_KEY=` vacía, **`EXTRACTOR_TIMEOUT_MS=20000`,
+  `REDACTOR_TIMEOUT_MS=8000` y `RAG_TIMEOUT_MS=30000`** — las tres no son
+  opcionales: con los valores del perfil A, un modelo local cae en timeout en
+  todos los turnos. Las líneas exactas están comentadas en `.env.example`, listas
+  para descomentar.
+
+  **El perfil C no tiene cuota ni red.** Es la única ruta que no puede quedarse
+  sin peticiones a mitad de una demostración.
 
 Reinicie con `docker compose up -d` (con `sudo` en Linux) después de tocar `.env`.
 
@@ -269,6 +363,7 @@ Reinicie con `docker compose up -d` (con `sudo` en Linux) después de tocar `.en
 | `LLM_MODELO está vacío…` | No puso el identificador del modelo. El mensaje trae el valor exacto que va en cada perfil |
 | `el proveedor rechaza la clave (HTTP 401)` | La clave llegó pero no es válida: sobra un espacio, falta un carácter, o está revocada |
 | `el proveedor no sirve «…»; modelos disponibles que coinciden: …` | La clave está bien y el modelo no existe en ese proveedor. Copie uno de los que lista |
+| `el proveedor no es alcanzable: … 400 Bad Request …` **en el perfil A** | Casi siempre es **la clave**, no la red: Google responde 400 —no 401— a una clave inválida o al marcador sin sustituir. Revise `LLM_API_KEY` antes de revisar la conexión |
 | `ausente` | El archivo `.env` no existe o la línea quedó vacía |
 
 ---
@@ -327,6 +422,16 @@ Dos decisiones de medición que nos perjudican y aun así son las correctas:
 `t0` es el instante del último fragmento con voz, no el instante en que el
 detector decide que hubo silencio (esa ventana es espera real del paciente); y
 `t1` incluye la latencia de salida que declara el propio `AudioContext`.
+
+#### Los tres parámetros del detector de fin de habla
+
+Viven en `.env` y son los del cliente, no los del servidor:
+
+| Variable | Qué es | Cómo ajustarlo |
+|---|---|---|
+| `VAD_UMBRAL_RMS` | Energía normalizada (0-1) a partir de la cual se considera que hay voz | **Súbalo** si el ambiente es ruidoso y el agente corta al paciente. **Bájelo** si no detecta que habló |
+| `VAD_SILENCIO_MS` | Silencio continuo que se toma por «terminó de hablar» | Es **espera real del paciente y entra entera en la latencia medida**: bajarlo mejora el número tanto como mejora la experiencia, y subirlo lo empeora igual |
+| `VAD_MINIMO_HABLA_MS` | Voz acumulada mínima para dar el turno por bueno | Evita que una tos dispare un turno |
 
 ### 5.0.2 Comandos de uso diario
 
@@ -437,6 +542,8 @@ lo verifica y falla si alguna se cuela.
 | `LLM_MODELO` | *(vacío)* | Identificador exacto del modelo. Obligatoria, **sin default a propósito** |
 | `LLM_API_KEY` | *(vacía)* | Clave del proveedor del LLM. Obligatoria salvo en perfil local |
 | `LLM_PERFIL` | `remoto` | `remoto` \| `local`. Informativo, lo muestra `/salud` |
+| `EXTRACTOR_TIMEOUT_MS` | `2500` | Vive **dentro de cada perfil** en `.env.example`. 2500 remoto, **20000 local** |
+| `RAG_TIMEOUT_MS` | `4000` | Igual: **30000** con el perfil local |
 | `STT_API_KEY` | *(vacía)* | Clave de Groq para la transcripción. Obligatoria |
 | `PUERTO` | `8080` | Puerto del **host**. Cámbielo si 8080 está ocupado |
 | `DATASET_DIR` | `./dataset` | Origen del bind del corpus (`:ro`) |
@@ -505,7 +612,7 @@ Son **servicios externos**, y por eso son las dos únicas cosas que piden clave:
 
 | Servicio | Modelo | Dónde corre |
 |---|---|---|
-| Modelo de lenguaje | `meta-llama/llama-3.1-70b-instruct` (Llama 3.1 70B) | Proveedor remoto OpenAI-compatible |
+| Modelo de lenguaje | sucesor de Gemini 1.5 Flash (perfil A) · `meta-llama/llama-3.1-70b-instruct` (perfil B) | Proveedor remoto OpenAI-compatible |
 | Transcripción (STT) | `whisper-large-v3` | Groq |
 
 Los dos hablan el mismo protocolo OpenAI-compatible, así que son **una sola
@@ -695,9 +802,71 @@ configuración y ninguna otra.
 
 **Lectura honesta de estos números:** el turno lo domina el extractor, y el
 extractor aquí es un modelo de 3B corriendo en CPU. Es el precio declarado del
-fallback offline, no el de la ruta principal. La ruta remota (Llama 3.1 70B en un
-proveedor con GPU) **no se ha medido** porque no hay clave en este repositorio, y
-poner ahí un número «esperado» sería inventarlo.
+fallback offline, no el de la ruta principal.
+
+#### El perfil A, ya medido (2026-08-10)
+
+Misma máquina, `models/gemini-3.6-flash` con STT **real** en Groq, seis turnos,
+`--pausa-ms 4000`. **Cuatro turnos de seis salieron limpios** (toda invocación al
+LLM con `resultado: ok` y sin espera por 429); los percentiles se calculan
+**solo** sobre esos cuatro y el `n` va escrito al lado porque con `n = 4` un P95
+es el máximo de la muestra, no una cola.
+
+| Métrica (solo turnos limpios, n = 4) | Valor | Cómo se midió |
+|---|---|---|
+| Total del turno en el servidor — P50 | **3 777 ms** | `latencia_ms.servidor_total` en `turnos.jsonl` |
+| Total del turno en el servidor — P95 | **4 043 ms** | ídem. Con `n = 4`, es el máximo observado |
+| Cliente headless — P50 / P95 | 3 807 / 4 081 ms | `cliente_fin_habla_a_audio`, origen `cliente_headless`. **Cota inferior**, no comparable con el navegador |
+| STT real (Groq, `whisper-large-v3`) | 475–818 ms | `spans.stt`. Ya no es el banco de pruebas |
+| LLM — extractor | 1 102–1 643 ms | `spans.extraccion` |
+| LLM — redactor | 1 087–1 537 ms | `spans.redaccion`, con `REDACTOR_TIMEOUT_MS=2000` |
+| Síntesis de voz (Piper, local) | 459–1 585 ms | `spans.tts` |
+| Decisión de la política | 0,06–0,14 ms | `spans.politica` |
+| Tokens de la llamada | 4 553 entrada / 433 salida / 338 razonamiento | campo `usage` del proveedor; el razonamiento se deriva de `total − prompt − completion` |
+| **Costo de la llamada** | **0,012612 USD** | `configuracion/tarifas.json` + `app/registro.py::costo_de_uso` |
+
+#### Desglose del costo, y por qué el razonamiento no es un detalle
+
+Tarifa de `models/gemini-3.6-flash`, nivel **estándar de pago**: 1,50 USD por
+millón de entrada, 7,50 por millón de salida
+(<https://ai.google.dev/pricing>, consultada el 2026-08-10).
+
+| Concepto | Tokens | USD |
+|---|---|---|
+| Entrada | 4 553 | 0,006829 |
+| Salida declarada (`completion_tokens`) | 433 | 0,003248 |
+| Salida por razonamiento | 338 | 0,002535 |
+| **Total de la llamada** | | **0,012612** |
+
+**El razonamiento aporta el 43,8 % del costo de salida** (338 de los 771 tokens
+facturables) y el 20 % del total. No aparece en `completion_tokens`: hay que
+derivarlo de `total_tokens − prompt − completion` y sumarlo a la salida. La
+tabla de precios de Google titula esa columna literalmente **«Precio de salida
+(incluidos los tokens de pensamiento)»**, así que no es una interpretación.
+
+Facturar solo `completion_tokens` daría **0,010077 USD** —un 20 % menos de
+total, un **43,8 % menos de costo de salida**—. Es el mismo error que F3.3
+corrigió un nivel más abajo, donde `tokens_out` reportaba menos tokens de los
+generados; aquí habría reportado menos dinero del facturado. La regla vive en
+una sola función (`app/registro.py::costo_de_uso`) usada por el cierre de la
+llamada y por `/metricas`, y hay un test que la fija.
+
+**Qué contaminó los otros dos turnos, y no fue el modelo:**
+
+- **Turno 1** — `[Errno -3] Temporary failure in name resolution`: caída de DNS
+  transitoria dentro del contenedor. Se llevó por delante el STT (16 007 ms) y el
+  redactor (15 745 ms) a la vez. Sin transcripción, el extractor **no se invoca**
+  por diseño.
+- **Turno 5** — el redactor recibió `HTTP 200` **sin `content`**. Causa: con
+  `reasoning_effort: low` el modelo gasta ~112 tokens de razonamiento de los 120
+  que el redactor le concede (`max_tokens=120`), y se queda sin presupuesto para
+  la respuesta. En los turnos donde sí respondió, emitió **2–4 tokens visibles**,
+  que las guardas de forma rechazan por cortos.
+
+**Consecuencia:** `fuente_respuesta` fue `plantilla` en los **seis** turnos. El
+redactor ya alcanza al proveedor —eso lo arregló subir el timeout a 2000 ms— pero
+todavía no emite una sola frase con este modelo. El techo sigue sin ejercitarse;
+el piso, otra vez, sostuvo la llamada entera.
 
 Lo que sí queda demostrado con estos mismos números: **el piso funciona**. Con el
 proveedor de LLM caído, el turno completo tardó **371 ms** (STT 2,1 · extracción

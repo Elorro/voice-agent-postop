@@ -1248,3 +1248,570 @@ esa ruta para la consola y G5 se evalúa sobre ella.
 - `[ESPECULACIÓN]` La ruta remota (Llama 3.1 70B) sigue sin ejecutar un turno con
   RAG: sin clave. Con el modelo local, la redacción desde fragmentos tarda ~10 s y
   obliga a `RAG_TIMEOUT_MS=30000` en el `.env` de desarrollo.
+
+---
+
+## 2026-08-10 · La organización autoriza los sucesores: Gemini pasa a ruta principal
+
+### El hecho nuevo, y por qué cambia la decisión de 3.0
+
+Se consultó a la organización qué hacer con los modelos de la lista permitida que
+sus proveedores apagaron. **Respuesta escrita recibida el 2026-08-09**, literal:
+
+> «Te aconsejamos migrar directamente hacia las versiones o iteraciones más
+> recientes liberadas por los proveedores de dichos modelos (sucesores de los
+> modelos), o bien revisar la clasificación actualizada en https://arena.ai»
+
+En 3.0 la decisión fue *conservar el modelo exigido y cambiar de proveedor*
+(Llama 3.1 70B fuera de Groq), porque era la única lectura de G3 que no dependía
+de interpretar las bases. Esa lectura sigue siendo válida, pero **ya no es la
+única disponible**: Gemini 1.5 Flash estaba en la lista permitida y esta
+respuesta autoriza explícitamente a su sucesor. La autorización es de quien
+escribió las bases, no una inferencia propia — esa es toda la diferencia.
+
+### Lo que se reordenó
+
+`.env.example` pasa de dos perfiles a **tres**, y el activo cambia:
+
+| Perfil | Modelo | Cubre G3 por | Timeout del extractor |
+|---|---|---|---|
+| **A** (ACTIVO) | sucesor de Gemini 1.5 Flash | autorización escrita del 2026-08-09 | 2500 ms |
+| **B** (alterna) | `meta-llama/llama-3.1-70b-instruct` | es el modelo **literal** de la lista | 2500 ms |
+| **C** (fallback) | `llama3.2:3b` local | es la celda **«Local, CPU»** literal | 20000 ms |
+
+La razón de que A desplace a B **está medida y no es una preferencia**:
+`llama3.2:3b` en CPU tarda 7-15 s por extracción (48 s la primera), lo que deja
+el presupuesto de latencia de la rúbrica fuera de alcance por cualquier camino
+local; y B, siendo el modelo literal, **exige saldo en la cuenta del proveedor**,
+así que un evaluador sin saldo vería fallar la ruta principal sin que nada
+estuviera mal en el repositorio. A no pide pesos (~2 GB menos de descarga) ni
+saldo.
+
+Que B siga documentada y a un descomentado de distancia es deliberado: si la
+autorización se discutiera, la solución no se queda sin ruta remota, y C no se
+discute en absoluto.
+
+### `EXTRACTOR_TIMEOUT_MS` se mudó dentro de cada perfil
+
+Vivía en una sección «Turno de voz» al final del archivo, a ~150 líneas del
+bloque de perfiles. Su valor correcto **depende del perfil** (2500 remoto, 20000
+local) y el modo de falla al olvidarlo no es sutil: el extractor cae en timeout
+en *todos* los turnos y el agente escala por agotamiento sin haber entendido
+nada. Una variable cuyo valor depende de otra decisión tiene que estar donde se
+toma esa decisión. Ahora cada perfil trae el suyo, y donde estaba quedó el
+puntero que lo explica.
+
+### Los marcadores de clave
+
+Las dos claves se piden con un texto que es imposible confundir con un valor:
+`LLM_API_KEY=aqui_la_api_key_del_llm_(gemini)` y
+`STT_API_KEY=aqui_la_api_key_de_groq_(whisper)`, en `.env.example` **y** en el
+`.env` de desarrollo, más un recuadro al principio de ambos archivos que dice que
+son dos y solo dos. Verificado que `docker compose config` los parsea sin
+comillas pese a los paréntesis.
+
+### Lo que NO se pudo verificar, y no se disimuló
+
+**El identificador exacto del modelo del perfil A.** Obtenerlo exige una clave
+—`GET /v1beta/openai/models` responde `400 Please pass a valid API key` sin
+ella— y no había ninguna disponible. En vez de escribir un nombre plausible,
+`LLM_MODELO` quedó con el marcador
+`PEGUE_AQUI_EL_ID_VERIFICADO_DEL_SUCESOR_DE_GEMINI_1.5_FLASH` y el `curl` que lo
+resuelve al lado. **Un nombre inventado que resultara equivocado sería peor que
+un hueco visible**, y el hueco no puede pasar desapercibido: `sondear_llm`
+comprueba que el modelo existe en el proveedor y `/salud` sale NO LISTO
+nombrando lo que falló. La documentación oficial de Google (consultada el
+2026-08-09) lista `gemini-3.6-flash`, `gemini-3.5-flash` y `gemini-2.5-flash`
+como estables de la familia Flash, pero eso es **referencia, no verificación**.
+
+**La latencia del perfil A.** El argumento «un modelo remoto lo baja al orden del
+segundo» está medido del lado local y **estimado** del lado remoto. Ninguna
+inferencia real se ha ejecutado contra Gemini.
+
+### Hallazgo: el diagnóstico de `/salud` miente en el perfil A
+
+Google responde **400** a una clave inválida donde `sondear_llm` espera 401/403
+(`app/salud.py`, rama `codigo in (401, 403)`). Comprobado levantando el servicio
+con el marcador puesto: el veredicto es correcto —NO LISTO— pero el texto dice
+«el proveedor no es alcanzable», que manda al evaluador a revisar su red cuando
+el problema es la clave. **No se corrigió el código**: queda documentado en
+`docs/DECLARACION_MODELO.md` §5 (punto 3 de «lo que NO está verificado») y con
+una fila propia en la tabla de diagnóstico del README. Es una línea de cambio y una decisión de Luis.
+
+### Punto 4 de 3.2: el bloque `rag` de `turnos.jsonl`, verificado de nuevo
+
+Se ejercitó **de punta a punta** (audio sintetizado con el Piper del contenedor →
+STT → extractor → RAG → política → plantilla → TTS → registro), con el perfil C
+local, no con dobles de test. La consulta «¿Qué signos de infección debo vigilar
+en la herida quirúrgica?» recuperó con `mejor_score` **0,6444** sobre el umbral
+0,59 y dejó la cita con ruta, página 6, texto citado y los tres scores
+(`score_denso` 0,6637, `score_lexico` 0,6251). El criterio (g) del encargo
+anterior está cubierto por una corrida nueva, no por la de ayer.
+
+**Dos cosas que salieron de esa corrida y no del diseño:**
+
+- `[HECHO]` **El banco de pruebas no sintetiza, y su docstring dice que sí.**
+  `scripts/llamada_de_prueba.py --frases X` sin `--audios` manda **audio vacío**;
+  el agente entonces salta el STT (`stt 0.0 ms`), la transcripción llega vacía y
+  la llamada entera se ejecuta contra el silencio *sin que nada falle*. Se
+  descubrió porque los dos primeros turnos «funcionaron» y no consultaron el
+  corpus. El docstring promete «sintetiza lo que dice el paciente con la misma
+  voz de Piper»; el código solo lee WAVs de `--audios`. Es una trampa para quien
+  siga el `--help`.
+- `[HECHO]` **La fragilidad del IDF interno tiene un ejemplo concreto y barato.**
+  «¿Cómo debo cuidar la herida **quirúrgica** en casa?» puntúa **0,5174** y el
+  agente declara su límite; «¿Cómo debo cuidar la herida en casa después de la
+  cirugía?» puntúa **0,6633** y responde. Misma pregunta clínica, mismo corpus,
+  lados opuestos del umbral. Es exactamente el coste declarado de α = 0,5 con IDF
+  del propio corpus, ahora con un par mínimo que lo demuestra.
+
+### Lo verificado, y con qué
+
+| Criterio | Resultado |
+|---|---|
+| `docker compose config` parsea los marcadores con paréntesis | OK, sin comillas |
+| `/salud` con el marcador puesto | **NO LISTO**, LLM y STT en rojo; los otros cinco componentes OK |
+| Turno completo con RAG por encima del umbral | OK, `mejor_score` 0,6444 > 0,59, 1 cita con ruta y página |
+| `sh scripts/sin_rutas_absolutas.sh -v` | **0**, 205 archivos, sin avisos |
+| `python3 -m pytest tests/ -q` | **312 pasan, 1 skip** (igual que 3.2) |
+| `DATASET_DIR=./dataset python3 -m pytest tests/ -q` | **320 pasan, 0 skip** |
+
+### Deuda que este cambio deja abierta
+
+- `[HECHO]` **El identificador del perfil A es un marcador.** Sin clave no se
+  verifica. Es lo primero que hay que resolver antes de entregar.
+- `[HECHO]` **`sondear_llm` no reconoce el 400 de Google como «clave inválida».**
+  Una línea en `app/salud.py`; no se tocó por estar fuera del encargo.
+- `[HECHO]` **`scripts/llamada_de_prueba.py` promete una síntesis que no hace.**
+  O sintetiza, o el docstring y el `--help` dejan de decir que sintetiza.
+- `[ESPECULACIÓN]` La latencia del perfil A sigue sin medirse. Todo el argumento
+  de rendimiento que lo puso como principal descansa en eso.
+
+---
+
+## F3.3 — El perfil A no era medible, y por cinco razones distintas
+
+**Encargo:** sintetizar los WAV que faltaban, espaciar el banco de pruebas,
+arreglar el timeout del perfil local, y medir el turno de punta a punta contra
+el perfil A. Lo primero, lo segundo y lo tercero están hechos. **La medición no,
+y no por falta de trabajo: el perfil A no da para medirla hoy.**
+
+### Lo que se arregló del encargo
+
+- `[HECHO]` **Los WAV no existían.** No se habían perdido: nada en el repositorio
+  los producía nunca. `scripts/sintetizar_frases.py` (nuevo) los genera dentro
+  del contenedor, que es donde viven Piper y espeak-ng. Cierra la deuda de F3.2
+  «`llamada_de_prueba.py` promete una síntesis que no hace».
+- `[HECHO]` **`--pausa-ms` en el banco** (defecto 4000), *antes* de `t0` para no
+  contaminar la latencia del turno.
+- `[HECHO]` **Reintento ante 429 con backoff y `Retry-After`**, con presupuesto
+  total de espera (`LLM_ESPERA_429_MS`, 2000 ms). Si la espera pedida no cabe, se
+  abandona en el acto: dormir 33 s dentro del turno es peor que degradar a
+  plantilla, y recortar la espera solo garantiza volver a chocar.
+- `[HECHO]` **`REDACTOR_TIMEOUT_MS` pasa a ser por perfil.** El `timeout tras
+  601 ms (tope 600 ms)` del perfil local era el **redactor**, no el extractor: el
+  extractor local ya tenía 20000. El encargo apuntaba a la variable equivocada.
+
+### Cuatro defectos que solo aparecieron al medir de verdad
+
+- `[HECHO]` **`models/gemini-2.0-flash` tiene cuota CERO.** El 429 trae
+  `limit: 0` en las tres métricas del nivel gratuito. No es ráfaga ni cuota
+  agotada por uso: Google lo sacó del nivel gratuito. Ni el backoff ni las pausas
+  lo tocan. Perfil A pasa a `models/gemini-3.5-flash`, **verificado** contra el
+  endpoint (§5 de la declaración, deuda de F3.2 cerrada).
+- `[HECHO]` **El razonamiento del modelo se comía el presupuesto de tokens.**
+  Medido: `prompt 13 + completion 9` contra `total 229`. Esos 207 tokens de
+  razonamiento consumen `max_tokens` y NO aparecen en `completion_tokens`. Con
+  `LLM_MAX_TOKENS=220` dejaban 13 para responder → `finish_reason: length` →
+  `json_invalido` en **todas** las extracciones. Se apaga con
+  `reasoning_effort: none` (`LLM_RAZONAMIENTO`).
+- `[HECHO]` **La contabilidad de tokens subestimaba ~20×.** `tokens_out` leía
+  `completion_tokens` (9) donde se generaron 216. Ahora se derivan de
+  `total - prompt - completion` y viajan en `tokens_razonamiento`. Es aritmética
+  sobre lo que manda el proveedor, no una estimación: si no viene `total`, queda
+  en `None`.
+- `[HECHO]` **`parsear_json` usaba un regex greedy.** `\{.*\}` llega hasta la
+  ÚLTIMA llave del texto, y el modelo cierra el objeto y añade una `}` suelta.
+  Se perdía una extracción entera y correcta por un carácter. Ahora `raw_decode`
+  desde la primera llave.
+- `[HECHO]` **El extractor perdía la cuenta de reintentos.** Recomponía la
+  `SalidaLLM` por posición y descartaba `reintentos_429`: el registro decía «0
+  reintentos» sobre turnos que habían esperado dos veces al proveedor.
+
+### Lo verificado, y con qué
+
+| Criterio | Resultado |
+|---|---|
+| `python3 -m pytest -q` | **326 pasan, 1 skip** (312 antes; 14 tests nuevos) |
+| Las 6 señales del núcleo se extraen con valor y cita | **5/6 en una corrida** (`herida`, `dolor_nrs`, `fiebre_c`, `movilidad`, `apetito`); `sueno` verificada aparte (`levemente_alterado`, cita «no he pasado muy bien la noche») |
+| La política escala por Nivel 1 cuando toca | OK: `dolor_nrs=7` en día 7 (TARDÍO, umbral 7) → **ROJO por S1** en el turno 2 |
+| `Retry-After` de Google se lee y se respeta | OK: pide 53 s / 43 s / 32 s, no caben en 2000 ms, abandona sin dormir |
+| **P50/P95 del perfil A** | **NO CALCULABLE.** 0 turnos limpios de 6 |
+
+### Por qué la latencia sigue sin medirse — dos causas independientes
+
+1. `[HECHO]` **El nivel gratuito da 20 peticiones POR DÍA** para
+   `gemini-3.5-flash` (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`,
+   `limit: 20`). Una llamada de 6 turnos gasta **11**. El «Please retry in 51s»
+   del mensaje es engañoso: la cuota es diaria, no por minuto, así que
+   `--pausa-ms` no la esquiva por construcción.
+2. `[HECHO]` **`REDACTOR_TIMEOUT_MS=600` está por debajo del piso de este
+   modelo.** Medido en los turnos que sí alcanzaron al proveedor: 604,2 · 602,1 ·
+   602,4 ms, es decir timeout en **todos**. El redactor nunca emitió una sola
+   frase; el agente habló siempre por plantilla. Esto es independiente de la
+   cuota: aunque hubiera peticiones de sobra, ningún turno saldría limpio.
+
+**Consecuencia para el argumento de rendimiento:** el perfil A se eligió por
+latencia frente a los 7-15 s del local, y ese número sigue **sin medir**. Lo
+único medido hoy son los spans de un turno degradado.
+
+### Deuda que este cambio deja abierta
+
+- `[ESPECULACIÓN]` **La latencia del perfil A sigue sin medirse.** Ahora se sabe
+  qué hace falta: cuota (esperar al reset diario, o facturación) y subir
+  `REDACTOR_TIMEOUT_MS` del perfil A por encima del piso del modelo, o apagar el
+  redactor y medir el piso del sistema.
+- `[HECHO]` **Subir `REDACTOR_TIMEOUT_MS` relaja una garantía documentada.**
+  `app/llm/redactor.py` justifica los 600 ms como el tope que acota la cola del
+  P95. Si sube a 2000, el P95 se mueve con él. Es una decisión de diseño, no un
+  ajuste.
+- `[HECHO]` **`sondear_llm` no reconoce el 400 de Google como «clave inválida».**
+  Sigue abierta desde F3.2, sin tocar.
+- `[ESPECULACIÓN]` **20 peticiones/día no alcanzan para una demostración en
+  vivo.** Si el jurado ejecuta dos llamadas seguidas, la segunda cae. El perfil C
+  local no tiene ese problema y es la única ruta sin cuota.
+
+---
+
+## F3.4 — El perfil A, medido por fin: 4 turnos limpios de 6
+
+**Encargo:** corregir el timeout del redactor, elegir un modelo con cuota
+disponible, y hacer UNA corrida limpia. Luego reordenar README y `.env.example`
+en torno al límite diario, y adelgazar `.env.example` a un formulario.
+
+### La corrida
+
+`models/gemini-3.6-flash`, STT real en Groq, 6 turnos, `--pausa-ms 4000`.
+**4 turnos limpios de 6** (toda invocación al LLM con `resultado: ok` y sin
+espera por 429). Percentiles **solo** sobre esos cuatro; con `n = 4` el P95 es el
+máximo observado y así queda dicho.
+
+| | P50 | P95 | n |
+|---|---|---|---|
+| Servidor | **3 777 ms** | **4 043 ms** | 4 de 6 |
+| Cliente headless (cota inferior) | 3 807 ms | 4 081 ms | 4 de 6 |
+
+Spans de los turnos limpios: STT real 475-818 · extractor 1 102-1 643 · política
+0,06-0,14 · redactor 1 087-1 537 · TTS 459-1 585 ms.
+Tokens de la llamada: **4 553 entrada / 433 salida / 338 razonamiento**.
+
+- `[HECHO]` **Las seis señales se extraen con valor y cita.** `herida→normal`,
+  `dolor_nrs→3`, `fiebre_c→37.2`, `movilidad→normal`, `apetito→normal`,
+  `sueno→levemente_alterado`. Y la política escala bien: `dolor_nrs=7` en día 7
+  (TARDÍO, umbral 7) cerró la llamada en **ROJO por S1** en el turno 2.
+- `[HECHO]` **El costo de la llamada es `null`, y es correcto que lo sea.**
+  `configuracion/tarifas.json` no declara ningún modelo de Google, así que
+  `/metricas` lo reporta en `modelos_sin_tarifa`. Poner un cero implícito
+  parecería medido. **Deuda:** falta la entrada de Gemini con fuente y fecha; sin
+  ella no hay costo por llamada, solo tokens.
+
+### Qué contaminó los otros dos turnos — no fue el modelo
+
+- `[HECHO]` **Turno 1: caída de DNS.** `[Errno -3] Temporary failure in name
+  resolution` dentro del contenedor, simultánea en STT (16 007 ms) y redactor
+  (15 745 ms). Sin transcripción el extractor no se invoca, por diseño.
+- `[HECHO]` **Turno 5: `HTTP 200` sin `content`.** Con `reasoning_effort: low`
+  el modelo gasta ~112 de los 120 tokens que el redactor concede
+  (`max_tokens=120`) y se queda sin presupuesto para responder. Es el mismo fallo
+  que F3.3 encontró en el extractor, un nivel más abajo.
+
+### Las dos correcciones previas
+
+- `[HECHO]` **`REDACTOR_TIMEOUT_MS` del perfil A: 600 → 2000.** Los 600 ms se
+  descartaron **por medición**: 604,2 · 602,1 · 602,4 ms, timeout en todos. Un
+  tope por debajo del piso del modelo no acota la cola del P95; solo garantiza
+  que el redactor no emita nunca. Con 2000 el redactor **sí alcanza al
+  proveedor** y entra en el P95, que es lo honesto: el número tiene que reflejar
+  el sistema que se entrega.
+- `[HECHO]` **La cuota es POR MODELO.** `gemini-3.5-flash` tenía su cubo diario
+  agotado, así que el perfil A pasa a `models/gemini-3.6-flash`, verificado 200 y
+  con el contrato del extractor comprobado antes de gastar la corrida.
+
+**Pero `fuente_respuesta` fue `plantilla` en los seis turnos.** El redactor
+alcanza al proveedor y todavía no emite una sola frase: cuando responde son 2-4
+tokens visibles, que las guardas de forma rechazan por cortos. El techo sigue sin
+ejercitarse.
+
+### README y `.env.example` reordenados
+
+- `[HECHO]` **La clave propia del evaluador pasa a ser el camino principal.**
+  20 peticiones/día por modelo no alcanzan para una clave compartida; con clave
+  propia el problema no existe. La del informe queda como alternativa, con el
+  aviso de que su cuota puede estar consumida. El STT en Groq no cambia.
+- `[HECHO]` **`.env.example` reescrito como formulario: 386 → 128 líneas.**
+  Mismo conjunto de 43 nombres de variable antes y después, verificado con
+  `diff`. Los párrafos de calibración, deprecaciones e IDF se sustituyen por una
+  remisión de una línea a `docs/`.
+- `[HECHO]` **Dos datos vivían SOLO en comentarios de `.env.example` y se
+  trasladaron antes de borrar:** la lista ordenada de modelos alternativos (a
+  `docs/DECLARACION_MODELO.md` §5) y cómo ajustar los tres parámetros del VAD
+  (a `README.md` §5.0.1).
+
+### Deuda que este cambio deja abierta
+
+- `[HECHO]` **El redactor no emite con este modelo.** `max_tokens=120` en
+  `app/llm/redactor.py` no alcanza cuando el razonamiento se lleva ~112. O sube
+  ese techo, o el redactor necesita un modelo que no razone.
+- `[HECHO]` **Falta la tarifa de Gemini en `configuracion/tarifas.json`.** Sin
+  fuente y fecha verificadas no se pone: es la regla del propio archivo.
+- `[HECHO]` **El error «respuesta sin `choices[0].message`» no deja rastro en el
+  log.** Es el único camino de fallo del cliente sin `_log.warning`, y fue el que
+  costó más tiempo diagnosticar en el turno 5.
+- `[HECHO]` **`sondear_llm` no reconoce el 400 de Google como «clave inválida».**
+  Sigue abierta desde F3.2.
+
+---
+
+## F3.5 — El costo de una llamada, y un tercer nivel del mismo error
+
+**Encargo:** declarar la tarifa de `models/gemini-3.6-flash`, verificar que el
+costo suma los tokens de razonamiento a la salida, y documentar el uso que el
+proveedor hace del contenido.
+
+- `[HECHO]` **El costo SÍ subestimaba, y en dos sitios.** Tanto
+  `app/registro.py` (`/metricas`) como `app/dialogo/orquestador.py` (cierre por
+  llamada) facturaban `uso["out"]`, es decir solo `completion_tokens`. Es el
+  mismo error de contabilidad de F3.3 un nivel más arriba: allí se reportaban
+  menos tokens de los generados, aquí se habría reportado **menos dinero del
+  facturado**. La tabla de precios de Google titula esa columna literalmente
+  «Precio de salida (incluidos los tokens de pensamiento)».
+- `[HECHO]` **La regla de facturación vive ahora en una sola función**,
+  `app/registro.py::costo_de_uso`, usada por los dos sitios. Estaban duplicadas y
+  una regla duplicada acaba divergiendo. `por_modelo` acumula
+  `{in, out, razonamiento}`.
+- `[HECHO]` **Confirmado sobre la llamada medida el 2026-08-10** (`bc06511b75ad`,
+  4 553 / 433 / 338 tokens): **`costo_usd = 0,012612`**, que es el número
+  esperado. Desglose: entrada 0,006829 · salida declarada 0,003248 · salida por
+  razonamiento 0,002535.
+- `[CORRECCIÓN]` **El razonamiento aporta el 43,8 % del costo de salida, no el
+  46 %.** 338 de 771 tokens facturables = 0,4384. Es la misma cantidad que el
+  «subestima un 44 %» del encargo, así que el 46 % era un desliz: los dos
+  números son el mismo y valen 43,8 %. Sobre el total de la llamada, el
+  razonamiento pesa el 20 %.
+- `[HECHO]` **Test que fija la regla:** `test_el_razonamiento_se_factura_como_
+  salida` en `tests/test_registro.py`, con los números medidos y la comprobación
+  explícita del 43,8 % de diferencia. Más `test_costo_de_uso_sin_razonamiento_
+  no_cambia_nada`, para que un modelo que no razona no pague de más.
+
+### Lo verificado, y con qué
+
+| Criterio | Resultado |
+|---|---|
+| `python3 -m pytest tests/ -q` | **328 pasan, 1 skip** (326 antes) |
+| Costo de la llamada `bc06511b75ad` por el código real | **0,012612 USD**, `modelos_sin_tarifa` vacío |
+| Términos de la API de Gemini | Consultados el 2026-08-10; cita literal de ambos regímenes en DECLARACION_MODELO.md §4.1 |
+
+### El uso del contenido, y por qué entra en la declaración
+
+- `[HECHO]` **El nivel gratuito usa el contenido para mejorar los productos de
+  Google; el de pago no.** Citas literales de los términos en §4.1 de la
+  declaración. **Excepción:** en el EEE, Suiza y Reino Unido se aplican los
+  términos de pago aunque el servicio sea gratuito.
+- `[HECHO]` **Hoy no hay exposición:** el dataset del reto es sintético y las
+  conversaciones de prueba también.
+- `[INFERENCIA]` **Con voz de pacientes reales, el nivel gratuito quedaría
+  descartado.** Habría que facturar o irse al perfil C, que no manda nada a
+  terceros. Es un argumento a favor del fallback local que no estaba en §4, donde
+  solo pesaban cuota, saldo y red.
+
+### Deuda que este cambio deja abierta
+
+- `[HECHO]` **Los términos del STT (Groq) no se han consultado.** La declaración
+  lo dice explícitamente para que nadie deduzca de §4.1 nada sobre el audio.
+- `[HECHO]` **`models/gemini-3.5-flash` y los 2.0 siguen sin tarifa.** Aparecen
+  en `modelos_sin_tarifa` de `/metricas` sobre el histórico de `turnos.jsonl`, y
+  es correcto: no se verificó su precio.
+- `[HECHO]` **La tarifa declarada es la del nivel de pago.** Las corridas de este
+  repositorio se hicieron en el nivel gratuito, cuyo costo monetario es cero. El
+  número de `/metricas` responde «cuánto costaría esta llamada facturada», no
+  «cuánto se pagó».
+
+---
+
+## F3.6 — Diagnóstico: no eran los números desnudos, era HTTP 429
+
+**Síntoma reportado** tras la primera llamada real por navegador (G4 pasa): un
+paciente cooperativo contestó bien a todo, el agente no extrajo `fiebre_c` ni
+`dolor_nrs`, gastó las 6 preguntas y cerró **ROJO por AGOTAMIENTO**. La hipótesis
+era que el extractor falla con números sin unidad ni escala.
+
+**La hipótesis es falsa, y el registro lo dice sin ambigüedad**
+(llamada `c50e671845a8`, día postop **5** —régimen TARDÍO igual, umbral de dolor
+7—, `datos/logs/turnos.jsonl`):
+
+| turno | transcripción | extracción | tokens | causa |
+|---|---|---|---|---|
+| 1 | «…enrojecimiento leve pero no le está saliendo pus» | **ok** | 825/93 | — |
+| 2 | «si me cuesta un poco moverme» | **ok** | 812/95 | — |
+| 3 | «En este momento está en 36.» | **error** | `None` | `HTTP 429` |
+| 4 | «36» | **error** | `None` | `HTTP 429` |
+| 5 | «Siete.» | **error** | `None` | `HTTP 429` |
+| 6 | «7 7» | **error** | `None` | `HTTP 429` |
+
+- `[HECHO]` **`resultado: error`, no `json_invalido`.** No hubo salida del modelo
+  que validar. `tokens_in`/`tokens_out` en `None` en los cuatro: **el modelo
+  nunca vio esas frases**. No es que emitiera un valor y la cita lo tumbara; no
+  llegó a haber petición atendida.
+- `[HECHO]` **La causa está en `app.log`**, con `Retry-After` decreciente —57 s,
+  45 s, 30 s, 18 s—: el cubo diario de 20 peticiones de
+  `models/gemini-3.6-flash` se agotó a mitad de la llamada. Los turnos 1 y 2
+  fueron las dos últimas peticiones del día.
+- `[HECHO]` **Los cuatro números desnudos se extraen bien.** Verificado con las
+  transcripciones literales contra **dos modelos independientes**
+  (`gemini-3.5-flash-lite` y `gemini-3-flash-preview`), porque el de producción
+  estaba sin cuota:
+
+  | transcripción | señal pedida | valor | cita |
+  |---|---|---|---|
+  | «En este momento está en 36.» | `fiebre_c` | **36.0** | «está en 36» |
+  | «36» | `fiebre_c` | **36.0** | «36» |
+  | «Siete.» | `dolor_nrs` | **7** | «Siete» |
+  | «7 7» | `dolor_nrs` | **7** | «7 7» |
+
+  El prompt ya recibe la señal preguntada (`Se le preguntó por: fiebre_c`), que es
+  el contexto que hace interpretable una respuesta elíptica. **No hace falta
+  tocar el prompt ni relajar la validación por cita.**
+- `[HECHO]` **Las cuatro quedan fijadas como tests de regresión**
+  (`tests/test_extraccion.py`), más el contrapeso
+  `test_un_numero_desnudo_sin_cita_en_la_transcripcion_sigue_cayendo`, que prueba
+  que la validación por cita **no** se relajó.
+
+### El defecto real que esto destapa
+
+- `[HECHO]` **Un fallo del proveedor consume presupuesto de repreguntas.**
+  `app/dialogo/orquestador.py` llama a `llamada.cobrar_pregunta(senal)` al emitir
+  la repregunta, sin mirar por qué falló la extracción del turno anterior. El
+  sistema **no distingue** «el paciente no contestó con claridad» de «no pude
+  consultar al modelo». En esta llamada cobró 2 preguntas de `fiebre_c` y 2 de
+  `dolor_nrs` a un paciente que contestó bien las cuatro veces.
+- `[HECHO]` **El criterio de cierre queda inservible para el equipo clínico.**
+  `dolor_nrs=7` en régimen TARDÍO es bandera de Nivel 1: el cierre correcto era
+  **ROJO por S1**, no ROJO por AGOTAMIENTO. Misma clase, y por eso el paciente no
+  quedó desprotegido — pero la alerta que llega al equipo dice «no se pudo
+  confirmar nada» cuando lo cierto era «dolor severo confirmado».
+  **La extracción no es calidad: determina qué dice la alerta.**
+- `[HECHO]` **El cierre no marca la degradación.** El JSON de la llamada no
+  registra que 4 de 6 turnos corrieron sin LLM, así que ni el `criterio` ni el
+  resumen permiten distinguir esta llamada de un agotamiento legítimo.
+
+### Deuda abierta — pendiente de decisión del arquitecto
+
+- `[ESPECULACIÓN]` **No cobrar la repregunta cuando la extracción falló por el
+  proveedor** (`resultado` en `error`/`timeout`, no `json_invalido`). Conserva la
+  propiedad que justifica cobrar al emitir —un paciente que calla sí gasta
+  presupuesto, porque ahí la extracción SÍ corrió y no encontró señal— y solo
+  exime los turnos en que falló el agente. Acotado por `MAX_TURNOS_LLAMADA=12`,
+  que ya cierra la llamada como salvaguarda. **Cambia cuándo termina una llamada
+  clínica: no se toca sin decisión explícita.**
+- `[ESPECULACIÓN]` **Marcar el cierre como degradado** con el número de turnos
+  sin LLM real, para que `AGOTAMIENTO` nunca se lea solo. Es observabilidad pura,
+  sin cambio de comportamiento, y se puede hacer con independencia de lo anterior.
+
+---
+
+## F3.7 — Enmienda a HD7: un fallo de proveedor no gasta presupuesto
+
+**Alcance: los DOS proveedores del turno.** El STT que oye al paciente y el LLM
+que interpreta lo oído. La enmienda nació acotada a la extracción y se extendió
+al STT el mismo día, porque era el mismo defecto por otra puerta.
+
+**Caso que la motiva:** llamada **`c50e671845a8`**, **2026-08-10**, primera
+corrida real por navegador. Diagnóstico completo en F3.6. En resumen: el cubo
+diario del proveedor se agotó a mitad de la llamada, cuatro turnos murieron en
+`HTTP 429`, y el paciente —que había contestado bien las cuatro veces— se llevó
+un **ROJO por AGOTAMIENTO** con `dolor_nrs=7` sin extraer, cuando el cierre
+correcto era **ROJO por S1**.
+
+### 1. Observabilidad — sin cambio de comportamiento
+
+- `[HECHO]` **El cierre declara los turnos degradados, por causa y por
+  proveedor.** `Llamada.degradacion()` devuelve `{turnos_sin_extraccion,
+  turnos_sin_stt, turnos_sin_llm_real, turnos_totales, hubo_degradacion}` y viaja
+  **al lado del criterio** en la línea `cierre` de `turnos.jsonl`, en el JSON
+  persistido de la llamada y en la respuesta de `/api/llamada/{id}/cierre`.
+  La regla que lo justifica: **si un fallo exime presupuesto, tiene que verse en
+  el cierre**. Eximir sin dejar rastro sería tan opaco como cobrar de más.
+- `[HECHO]` **`/metricas` lo agrega y lo muestra**, en JSON (`extraccion`) y en la
+  página HTML. Sobre el histórico de esta máquina: **33 de 84 turnos sin LLM
+  real** (`{error: 29, timeout: 4, json_invalido: 4}`). Ese número es la medida
+  de cuánto de lo registrado hasta hoy está contaminado por cuota, no por
+  pacientes.
+- `[HECHO]` **`AGOTAMIENTO` ya no se puede leer solo.** Un cierre por agotamiento
+  con `turnos_sin_llm_real > 0` no significa lo mismo que uno limpio, y ahora eso
+  se ve sin ir a buscarlo al log.
+
+### 2. Enmienda a HD7 — la decisión de diseño
+
+**HD7 original:** el módulo de política LEE el presupuesto, el llamador lo COBRA,
+y se cobra **al emitir** la pregunta, no al recibir la respuesta —porque si se
+cobrara al recibirla, un paciente que calla no consumiría presupuesto y la
+indagación no terminaría nunca.
+
+**Enmienda (2026-08-10):** no se cobra la repregunta cuando el turno **no llegó
+a procesarse** por fallo de **cualquiera de los dos proveedores** —`stt.resultado`
+o `extraccion.resultado` en `error` o `timeout`—.
+
+**Justificación.** El presupuesto de indagación acota **cuánto se le insiste AL
+PACIENTE**. Un turno en que el agente no pudo oírlo, o no pudo consultar al
+modelo sobre lo oído, no es insistencia: al paciente no se le preguntó más veces,
+fue el agente el que falló.
+Cobrarlo convierte una caída de proveedor en un `ROJO por AGOTAMIENTO` para
+cualquier paciente, **incluido uno verde**. Eso no es conservador: es ruido que
+entierra las alertas reales.
+
+**Qué se preserva, y es lo que hace la enmienda segura:**
+
+- **HD7 sigue en pie:** se sigue cobrando **al emitir**. Un paciente que calla sí
+  gasta presupuesto, porque ahí la extracción **sí corrió** y no halló señal.
+- **`json_invalido` SÍ cobra.** El modelo respondió; la extracción ocurrió. Que
+  respondiera mal es calidad del modelo, no una caída, y el paciente sí fue
+  interrogado.
+- **El SILENCIO DEL PACIENTE SÍ COBRA**, y es el otro lado del criterio:
+  transcripción vacía con `stt.resultado` en `ok` significa que el agente oyó
+  bien y no había nada que oír. Ahí el paciente sí fue interrogado y sí calló,
+  que es exactamente el caso que HD7 existía para acotar. Los dos juntos son lo
+  que impide que la enmienda sea una puerta trasera para no terminar nunca.
+- **Lo único que se exime es el turno que el agente NO PUDO PROCESAR.**
+- **Cota superior intacta:** `MAX_TURNOS_LLAMADA=12` cierra la llamada igual, así
+  que una caída prolongada no deja la conversación girando delante del paciente.
+- **`politica/` no se toca.** Esto es contabilidad del llamador
+  (`app/dialogo/orquestador.py`), y el contrato del módulo —lee, nunca muta— es
+  exactamente el mismo.
+
+### Lo verificado, y con qué
+
+| Criterio | Resultado |
+|---|---|
+| `python3 -m pytest tests/ -q` | **341 pasan, 1 skip** (333 antes; 8 tests nuevos) |
+| LLM caído los 6 turnos, paciente que contesta bien | `preguntas_totales` se queda en **1** (solo la apertura), `criterio != AGOTAMIENTO`, llamada **abierta** |
+| **STT caído** 4 turnos | `preguntas_totales == 1`, `turnos_sin_stt == {"error": 4}` |
+| **STT en timeout** 3 turnos | `preguntas_totales == 1`, `turnos_sin_stt == {"timeout": 3}` |
+| **Silencio del paciente** (texto vacío, STT en `ok`) | **SÍ cobra**, y `hubo_degradacion is False` |
+| Paciente callado hasta el final | Cierra en **AGOTAMIENTO**: el silencio sí termina la llamada |
+| El mismo caso declara la degradación | `turnos_sin_llm_real == 6`, `turnos_sin_extraccion == {"error": 6}` |
+| Timeout del extractor | Tampoco cobra: `{"timeout": 2}`, `preguntas_totales == 1` |
+| `json_invalido` | **Sí cobra**: `preguntas_totales == 3`, `turnos_sin_llm_real == 0` |
+| Extracción normal | `hubo_degradacion is False` |
+| `sh scripts/sin_rutas_absolutas.sh` | **0**, sin avisos |
+
+### Deuda que este cambio deja abierta
+
+- `[CERRADO el mismo día]` ~~El mismo defecto sigue abierto por la puerta del
+  STT.~~ Extendido: `stt.resultado` en `error`/`timeout` exime igual, y
+  `turnos_sin_stt` lo declara en el cierre. El caso que lo motivaba —el turno 1
+  de la corrida de F3.4, que perdió el STT por una caída de DNS y cobró la
+  repregunta igual— ya no se cobraría.
+- `[ESPECULACIÓN]` **Con la enmienda, una caída larga del proveedor termina en
+  `tope_de_turnos` y no en una clase clínica.** Es correcto —no clasificar es
+  mejor que clasificar a ciegas— pero conviene comprobar que ese cierre llega al
+  equipo con la misma visibilidad que un cierre por clase.

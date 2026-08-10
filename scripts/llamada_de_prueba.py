@@ -2,12 +2,24 @@
 """BANCO DE PRUEBAS: recorre una llamada completa contra el servicio levantado.
 
 **No es parte de la aplicación.** Sirve para ejercitar el turno de punta a punta
-sin navegador: sintetiza lo que dice el paciente con la misma voz de Piper que
-usa el agente, lo sube por `multipart/form-data` como haría el cliente real, y
-va imprimiendo la decisión de la política en cada turno.
+sin navegador: sube por `multipart/form-data` los WAV del paciente como haría el
+cliente real, y va imprimiendo la decisión de la política en cada turno.
+
+Este script NO sintetiza. Los WAV los produce `scripts/sintetizar_frases.py`,
+que corre dentro del contenedor porque el modelo de Piper y espeak-ng no existen
+en el host. Sin `--audios` el cliente manda **audio vacío**: el agente salta el
+STT (`stt 0.0 ms`), la transcripción llega vacía y la llamada entera se ejecuta
+contra el silencio sin que nada falle. Eso no es una prueba de nada.
 
     # con el servicio arriba (docker compose up -d):
-    python3 scripts/llamada_de_prueba.py --dia 7 --frases frases.txt
+    docker compose cp scripts/sintetizar_frases.py agente:/tmp/
+    docker compose cp scripts/frases_de_prueba.txt agente:/tmp/frases.txt
+    docker compose exec -T -w /app -e PYTHONPATH=/app agente \
+        python3 /tmp/sintetizar_frases.py --frases /tmp/frases.txt --salida /tmp/audios
+    docker compose cp agente:/tmp/audios ./datos/audios_prueba
+
+    python3 scripts/llamada_de_prueba.py --dia 7 \
+        --frases scripts/frases_de_prueba.txt --audios datos/audios_prueba
 
 Lo que este cliente NO puede medir, y por eso lo declara en cada envío
 (`origen=cliente_headless`): la latencia hasta que el **primer sample suena**.
@@ -67,13 +79,24 @@ def main(argv: list[str]) -> int:
         "--frases",
         type=Path,
         required=True,
-        help="una intervención del paciente por línea; se sintetizan con Piper",
+        help="una intervención del paciente por línea; solo se usan para imprimir el turno",
     )
     analizador.add_argument(
         "--audios",
         type=Path,
         default=None,
-        help="directorio con turno_1.wav, turno_2.wav… ya sintetizados",
+        help="directorio con turno_1.wav, turno_2.wav… (sintetizar_frases.py). SIN esto se manda audio vacío",
+    )
+    analizador.add_argument(
+        "--pausa-ms",
+        type=int,
+        default=4000,
+        dest="pausa_ms",
+        help=(
+            "espera ANTES de cada turno. Una conversación real tiene pausas y el "
+            "banco las comprime: sin esto, 7 turnos disparan 14 invocaciones en "
+            "~7 s y el nivel gratuito del proveedor responde 429 (default: 4000)"
+        ),
     )
     opciones = analizador.parse_args(argv[1:])
 
@@ -100,6 +123,11 @@ def main(argv: list[str]) -> int:
     pendiente: tuple[int, float] | None = None
 
     for numero, frase in enumerate(frases, start=1):
+        # ANTES de t0, nunca dentro: esta espera simula el silencio entre
+        # intervenciones y no puede contaminar la latencia medida del turno.
+        if opciones.pausa_ms > 0:
+            time.sleep(opciones.pausa_ms / 1000.0)
+
         if opciones.audios:
             audio = (opciones.audios / f"turno_{numero}.wav").read_bytes()
         else:

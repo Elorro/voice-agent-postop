@@ -20,6 +20,7 @@ import pytest
 
 from politica.parametros import TOPE_GLOBAL, TOPE_POR_SENAL
 
+from app.contratos import ERROR, OK, TIMEOUT
 from app.dialogo import orquestador, plantillas
 from app.dialogo.estado import Almacen
 from tests.apoyo_turno import LLMFalso, config_de_prueba, escribir_tarifas, servicios
@@ -445,3 +446,178 @@ def test_el_costo_es_nulo_si_el_modelo_no_tiene_tarifa_declarada(tmp_path: Path)
     resumen = orquestador.cerrar_llamada(cfg, llamada, almacen)
     assert resumen["totales"]["costo_usd"] is None
     assert resumen["totales"]["modelos_sin_tarifa"] == ["modelo-de-prueba"]
+
+
+# --------------------------------------------------------------------------- #
+# Enmienda a HD7: un fallo del proveedor no gasta presupuesto de indagación
+# --------------------------------------------------------------------------- #
+# Motivada por la llamada c50e671845a8 (2026-08-10): el cubo diario del
+# proveedor se agotó a mitad de llamada, cuatro turnos murieron en HTTP 429, el
+# paciente había contestado bien las cuatro veces y la llamada cerró en ROJO por
+# AGOTAMIENTO. El presupuesto acota cuánto se le insiste AL PACIENTE; un turno en
+# que el agente no pudo consultar al modelo no es insistencia.
+def test_el_proveedor_caido_no_gasta_presupuesto_ni_cierra_por_agotamiento(
+    tmp_path: Path,
+) -> None:
+    cfg = config_de_prueba(tmp_path)
+    almacen = Almacen()
+    # El paciente contesta bien las seis veces; lo que falla es el extractor.
+    llm = LLMFalso(extractor_error=True, redactor_timeout=True)
+    dichas = [
+        "la herida la veo normal",
+        "me muevo normal",
+        "tengo 36",
+        "siete",
+        "he comido bien",
+        "duermo bien",
+    ]
+    servs = servicios(llm, dichas)
+
+    llamada, _ = orquestador.abrir_llamada(cfg, servs, almacen, dia_postop=5)
+    gastadas_tras_apertura = llamada.preguntas_totales
+    assert gastadas_tras_apertura == 1  # la apertura sí cobra: se preguntó
+
+    for _ in dichas:
+        payload = orquestador.procesar_turno(cfg, servs, llamada, b"audio")
+        if payload["fin"]:
+            break
+
+    # Lo que se está fijando: seis turnos con el proveedor caído NO consumieron
+    # ni una repregunta más allá de la apertura, así que la llamada sigue viva y
+    # NO cerró por agotar un presupuesto que el paciente nunca gastó.
+    assert llamada.preguntas_totales == gastadas_tras_apertura
+    assert llamada.criterio != "AGOTAMIENTO"
+    assert llamada.abierta
+
+    cierre = orquestador.cerrar_llamada(cfg, llamada, almacen, motivo="prueba")
+    degradacion = cierre["degradacion"]
+    assert degradacion["turnos_sin_llm_real"] == len(dichas)
+    assert degradacion["turnos_sin_extraccion"] == {"error": len(dichas)}
+    assert degradacion["hubo_degradacion"] is True
+
+
+def test_un_timeout_del_extractor_tampoco_gasta_presupuesto(tmp_path: Path) -> None:
+    cfg = config_de_prueba(tmp_path)
+    almacen = Almacen()
+    llm = LLMFalso(extractor_timeout=True, redactor_timeout=True)
+    servs = servicios(llm, ["la herida la veo normal", "me muevo normal"])
+
+    llamada, _ = orquestador.abrir_llamada(cfg, servs, almacen, dia_postop=5)
+    for _ in range(2):
+        orquestador.procesar_turno(cfg, servs, llamada, b"audio")
+
+    assert llamada.preguntas_totales == 1  # solo la apertura
+    assert llamada.degradacion()["turnos_sin_extraccion"] == {"timeout": 2}
+
+
+def test_un_json_invalido_SI_gasta_presupuesto(tmp_path: Path) -> None:
+    """El contrapeso, y es lo que impide que la enmienda se convierta en una
+    puerta trasera: si el modelo respondió, la extracción ocurrió. Que
+    respondiera mal es calidad del modelo, no una caída del proveedor, y el
+    paciente sí fue interrogado."""
+    cfg = config_de_prueba(tmp_path)
+    almacen = Almacen()
+    llm = LLMFalso(respuestas_extractor=["esto no es json"], redactor_timeout=True)
+    servs = servicios(llm, ["la herida la veo normal", "me muevo normal"])
+
+    llamada, _ = orquestador.abrir_llamada(cfg, servs, almacen, dia_postop=5)
+    for _ in range(2):
+        orquestador.procesar_turno(cfg, servs, llamada, b"audio")
+
+    assert llamada.preguntas_totales == 3  # apertura + dos repreguntas cobradas
+    assert llamada.degradacion()["turnos_sin_extraccion"] == {"json_invalido": 2}
+    assert llamada.degradacion()["turnos_sin_llm_real"] == 0
+
+
+def test_una_extraccion_normal_no_declara_degradacion(tmp_path: Path) -> None:
+    cfg = config_de_prueba(tmp_path)
+    almacen = Almacen()
+    llm = LLMFalso(
+        respuestas_extractor=[extraccion("normal", herida="normal")],
+        redactor_timeout=True,
+    )
+    servs = servicios(llm, ["la herida la veo normal"])
+    llamada, _ = orquestador.abrir_llamada(cfg, servs, almacen, dia_postop=5)
+    orquestador.procesar_turno(cfg, servs, llamada, b"audio")
+
+    assert llamada.degradacion()["hubo_degradacion"] is False
+    assert llamada.degradacion()["turnos_sin_llm_real"] == 0
+
+
+# --- La enmienda cubre los DOS proveedores del turno ------------------------ #
+# El STT es la otra puerta por la que entra el mismo defecto: si el agente no
+# oyó, el paciente habló igual. Ya ocurrió en la corrida de F3.4, donde una
+# caída de DNS se llevó el STT del turno 1 y la repregunta se cobró igual.
+def test_el_stt_caido_no_gasta_presupuesto(tmp_path: Path) -> None:
+    cfg = config_de_prueba(tmp_path)
+    almacen = Almacen()
+    llm = LLMFalso(redactor_timeout=True)
+    servs = servicios(llm, [], stt_resultado=ERROR)
+
+    llamada, _ = orquestador.abrir_llamada(cfg, servs, almacen, dia_postop=5)
+    for _ in range(4):
+        orquestador.procesar_turno(cfg, servs, llamada, b"audio")
+
+    assert llamada.preguntas_totales == 1  # solo la apertura
+    assert llamada.criterio != "AGOTAMIENTO"
+    degradacion = llamada.degradacion()
+    assert degradacion["turnos_sin_stt"] == {"error": 4}
+    assert degradacion["turnos_sin_llm_real"] == 4
+    assert degradacion["hubo_degradacion"] is True
+
+
+def test_el_stt_en_timeout_tampoco_gasta_presupuesto(tmp_path: Path) -> None:
+    cfg = config_de_prueba(tmp_path)
+    almacen = Almacen()
+    llm = LLMFalso(redactor_timeout=True)
+    servs = servicios(llm, [], stt_resultado=TIMEOUT)
+
+    llamada, _ = orquestador.abrir_llamada(cfg, servs, almacen, dia_postop=5)
+    for _ in range(3):
+        orquestador.procesar_turno(cfg, servs, llamada, b"audio")
+
+    assert llamada.preguntas_totales == 1
+    assert llamada.degradacion()["turnos_sin_stt"] == {"timeout": 3}
+
+
+def test_el_silencio_del_paciente_SI_gasta_presupuesto(tmp_path: Path) -> None:
+    """El otro lado del criterio, y el que sostiene HD7: transcripción vacía con
+    el STT en `ok` significa que el agente oyó bien y no había nada que oír. Ahí
+    el paciente sí fue interrogado y sí calló. Si esto no cobrara, un paciente
+    que no contesta dejaría la indagación girando para siempre."""
+    cfg = config_de_prueba(tmp_path)
+    almacen = Almacen()
+    llm = LLMFalso(redactor_timeout=True)
+    # Guion vacío: `stt_fijo` devuelve texto vacío con resultado `ok`.
+    servs = servicios(llm, [], stt_resultado=OK)
+
+    llamada, _ = orquestador.abrir_llamada(cfg, servs, almacen, dia_postop=5)
+    for _ in range(3):
+        payload = orquestador.procesar_turno(cfg, servs, llamada, b"audio")
+        if payload["fin"]:
+            break
+
+    assert llamada.preguntas_totales > 1  # la apertura Y las repreguntas
+    # Y no se declara degradación: el agente funcionó, el paciente calló.
+    assert llamada.degradacion()["turnos_sin_stt"] == {}
+    assert llamada.degradacion()["turnos_sin_llm_real"] == 0
+
+
+def test_un_paciente_callado_llega_a_agotar_el_presupuesto(tmp_path: Path) -> None:
+    """La consecuencia de lo anterior, comprobada de punta a punta: el silencio
+    sí termina la llamada, así que la enmienda no abre la puerta a una
+    indagación infinita."""
+    cfg = config_de_prueba(tmp_path)
+    almacen = Almacen()
+    llm = LLMFalso(redactor_timeout=True)
+    servs = servicios(llm, [], stt_resultado=OK)
+
+    llamada, _ = orquestador.abrir_llamada(cfg, servs, almacen, dia_postop=5)
+    for _ in range(cfg.max_turnos_llamada):
+        payload = orquestador.procesar_turno(cfg, servs, llamada, b"audio")
+        if payload["fin"]:
+            break
+
+    assert not llamada.abierta
+    assert llamada.criterio == "AGOTAMIENTO"
+    assert llamada.degradacion()["hubo_degradacion"] is False

@@ -15,6 +15,7 @@ import pytest
 from app.registro import (
     anotar,
     calcular_metricas,
+    costo_de_uso,
     leer,
     parchear_latencia_cliente,
     percentil,
@@ -144,6 +145,52 @@ def test_las_metricas_salen_del_archivo(tmp_path: Path) -> None:
     assert m["consumo"]["segundos_audio_transcritos"] == 8.0
     assert (m["rag"]["consultas"], m["rag"]["citas"]) == (0, 0)
     assert str(cfg.ruta_turnos_jsonl) == m["fuente"]
+
+
+def test_el_razonamiento_se_factura_como_salida(tmp_path: Path) -> None:
+    """La columna `salida` de Google dice literal «Precio de salida (incluidos
+    los tokens de pensamiento)», y el proveedor NO los mete en
+    `completion_tokens`. Cobrarlos exige sumarlos a mano.
+
+    Los números son los de la llamada medida el 2026-08-10 contra
+    `models/gemini-3.6-flash`: 4 553 de entrada, 433 de salida, 338 de
+    razonamiento, a 1,50 / 7,50 USD por millón.
+    """
+    cfg = config_de_prueba(tmp_path)
+    escribir_tarifas(cfg, {"models/gemini-3.6-flash": {"entrada": 1.5, "salida": 7.5}})
+    registro = turno("abc", 1)
+    registro["llm"] = [
+        {"rol": "extractor", "modelo": "models/gemini-3.6-flash",
+         "tokens_in": 4553, "tokens_out": 433, "tokens_razonamiento": 338,
+         "ms": 400, "reintentos": 0, "resultado": "ok"}
+    ]
+    anotar(cfg, registro)
+
+    m = calcular_metricas(cfg)
+    esperado = 4553 / 1e6 * 1.5 + (433 + 338) / 1e6 * 7.5
+    assert m["consumo"]["costo_usd"] == pytest.approx(esperado)
+    assert m["consumo"]["costo_usd"] == pytest.approx(0.012612)
+    assert m["consumo"]["tokens_razonamiento"] == 338
+    # `tokens_salida` sigue siendo lo que declara el proveedor; el razonamiento
+    # va aparte para que se vea que son dos cosas distintas.
+    assert m["consumo"]["tokens_salida"] == 433
+
+    # Y la comprobación que da sentido al test: ignorar el razonamiento
+    # subestimaría el costo de salida un 44 %.
+    solo_completion = 4553 / 1e6 * 1.5 + 433 / 1e6 * 7.5
+    salida_correcta = (433 + 338) / 1e6 * 7.5
+    salida_mala = 433 / 1e6 * 7.5
+    assert solo_completion < esperado
+    assert (salida_correcta - salida_mala) / salida_correcta == pytest.approx(0.438, abs=0.001)
+
+
+def test_costo_de_uso_sin_razonamiento_no_cambia_nada(tmp_path: Path) -> None:
+    """Un modelo que no razona no paga de más: sin la clave, la salida
+    facturable es `tokens_out` y nada más."""
+    assert costo_de_uso({"in": 1_000_000, "out": 1_000_000},
+                        {"entrada": 1.5, "salida": 7.5}) == pytest.approx(9.0)
+    assert costo_de_uso({"in": 0, "out": 100, "razonamiento": 0},
+                        {"entrada": 1.5, "salida": 7.5}) == pytest.approx(100 / 1e6 * 7.5)
 
 
 def test_un_modelo_sin_tarifa_deja_el_costo_en_nulo(tmp_path: Path) -> None:

@@ -23,7 +23,7 @@ import json
 import os
 import threading
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Mapping
 
 from app.config import Config
 
@@ -34,6 +34,7 @@ __all__ = [
     "calcular_metricas",
     "percentil",
     "cargar_tarifas",
+    "costo_de_uso",
 ]
 
 # Un solo worker (ver docker/entrypoint.sh), pero uvicorn atiende peticiones en
@@ -202,6 +203,31 @@ def _resumen(valores: list[float]) -> dict[str, Any]:
     }
 
 
+def costo_de_uso(uso: Mapping[str, int], tarifa: Mapping[str, Any]) -> float:
+    """USD de un `{in, out, razonamiento}` contra una entrada de la tabla.
+
+    **Los tokens de razonamiento se facturan como salida.** No es una decisión
+    nuestra: la tabla de precios de Google titula esa columna «Precio de salida
+    (incluidos los tokens de pensamiento)». El proveedor no los mete en
+    `completion_tokens`, así que cobrarlos exige sumarlos aquí a mano.
+
+    Es el mismo error de contabilidad que F3.3 corrigió un nivel más abajo —allí
+    `tokens_out` reportaba menos tokens de los generados; aquí el costo cobraría
+    menos dinero del facturado—. Con la llamada medida el 2026-08-10 (433 de
+    salida y 338 de razonamiento) ignorarlos subestima el costo de salida un
+    **44 %**.
+
+    Vive aquí, y no en cada sitio que calcula costos, porque hay dos —el cierre
+    por llamada y `/metricas`— y una regla de facturación duplicada es una regla
+    que acaba divergiendo.
+    """
+    salida_facturable = int(uso.get("out", 0)) + int(uso.get("razonamiento", 0))
+    return (
+        int(uso.get("in", 0)) / 1e6 * float(tarifa.get("entrada", 0.0))
+        + salida_facturable / 1e6 * float(tarifa.get("salida", 0.0))
+    )
+
+
 def cargar_tarifas(cfg: Config) -> dict[str, Any]:
     """Lee la tabla de tarifas. Ausente o ilegible => sin tarifas, no cero."""
     try:
@@ -234,8 +260,12 @@ def calcular_metricas(cfg: Config) -> dict[str, Any]:
 
     tokens_in = 0
     tokens_out = 0
+    tokens_razonamiento = 0
     invocaciones: dict[str, int] = {}
     reintentos = 0
+    reintentos_429 = 0
+    espera_429_ms = 0.0
+    turnos_con_429 = 0
     resultados: dict[str, int] = {}
     modelos_vistos: dict[str, dict[str, int]] = {}
     consultas_rag = 0
@@ -245,6 +275,8 @@ def calcular_metricas(cfg: Config) -> dict[str, Any]:
     fuentes_rag: dict[str, int] = {}
     segundos_audio = 0.0
     fuentes: dict[str, int] = {}
+    extraccion_fallida: dict[str, int] = {}
+    stt_fallido: dict[str, int] = {}
 
     for registro in leer(cfg.ruta_turnos_jsonl):
         tipo = registro.get("tipo")
@@ -273,14 +305,25 @@ def calcular_metricas(cfg: Config) -> dict[str, Any]:
             if isinstance(valor, (int, float)):
                 spans.setdefault(nombre, []).append(float(valor))
 
+        # Un turno «contaminado» es el que esperó a un 429. Su latencia no es
+        # comparable con la de un turno limpio, así que el conteo va aparte para
+        # que el P50/P95 se pueda leer sabiendo cuántos turnos lo ensucian.
+        turno_espero_429 = False
+
         for llamado in registro.get("llm") or []:
+            if int(llamado.get("reintentos_429") or 0):
+                turno_espero_429 = True
             rol = str(llamado.get("rol", "?"))
             invocaciones[rol] = invocaciones.get(rol, 0) + 1
             resultado = str(llamado.get("resultado", "?"))
             resultados[resultado] = resultados.get(resultado, 0) + 1
             reintentos += int(llamado.get("reintentos") or 0)
+            reintentos_429 += int(llamado.get("reintentos_429") or 0)
+            espera_429_ms += float(llamado.get("espera_reintento_ms") or 0.0)
             modelo = str(llamado.get("modelo") or "(sin modelo)")
-            acumulado = modelos_vistos.setdefault(modelo, {"in": 0, "out": 0})
+            acumulado = modelos_vistos.setdefault(
+                modelo, {"in": 0, "out": 0, "razonamiento": 0}
+            )
             entrada = llamado.get("tokens_in")
             salida = llamado.get("tokens_out")
             if isinstance(entrada, int):
@@ -289,6 +332,13 @@ def calcular_metricas(cfg: Config) -> dict[str, Any]:
             if isinstance(salida, int):
                 tokens_out += salida
                 acumulado["out"] += salida
+            razonados = llamado.get("tokens_razonamiento")
+            if isinstance(razonados, int):
+                tokens_razonamiento += razonados
+                acumulado["razonamiento"] += razonados
+
+        if turno_espero_429:
+            turnos_con_429 += 1
 
         rag = registro.get("rag") or {}
         consultas_rag += int(rag.get("consultas") or 0)
@@ -308,6 +358,17 @@ def calcular_metricas(cfg: Config) -> dict[str, Any]:
         fuente = str(registro.get("fuente_respuesta") or "?")
         fuentes[fuente] = fuentes.get(fuente, 0) + 1
 
+        # Turnos cuya extracción no produjo señales, por causa. Es lo que impide
+        # leer un AGOTAMIENTO como si fuera un paciente que no supo contestar.
+        res_extraccion = str((registro.get("extraccion") or {}).get("resultado") or "")
+        if res_extraccion and res_extraccion not in ("ok", "no_invocado"):
+            extraccion_fallida[res_extraccion] = (
+                extraccion_fallida.get(res_extraccion, 0) + 1
+            )
+        res_stt = str((registro.get("stt") or {}).get("resultado") or "")
+        if res_stt and res_stt != "ok":
+            stt_fallido[res_stt] = stt_fallido.get(res_stt, 0) + 1
+
     costo = 0.0
     sin_tarifa: list[str] = []
     for modelo, uso in modelos_vistos.items():
@@ -315,8 +376,7 @@ def calcular_metricas(cfg: Config) -> dict[str, Any]:
         if not tarifa:
             sin_tarifa.append(modelo)
             continue
-        costo += uso["in"] / 1e6 * float(tarifa.get("entrada", 0.0))
-        costo += uso["out"] / 1e6 * float(tarifa.get("salida", 0.0))
+        costo += costo_de_uso(uso, tarifa)
 
     return {
         "fuente": str(cfg.ruta_turnos_jsonl),
@@ -353,8 +413,18 @@ def calcular_metricas(cfg: Config) -> dict[str, Any]:
         "consumo": {
             "tokens_entrada": tokens_in,
             "tokens_salida": tokens_out,
+            # Generados por el modelo y NO incluidos en `tokens_salida`, porque
+            # el proveedor no los pone en `completion_tokens`. Se cobran igual.
+            # Si esto no es cero, `tokens_salida` NO es el consumo de salida.
+            "tokens_razonamiento": tokens_razonamiento,
             "invocaciones_llm": invocaciones,
             "reintentos_llm": reintentos,
+            "reintentos_429_llm": reintentos_429,
+            "espera_429_ms": round(espera_429_ms, 1),
+            # Cuántos turnos del P50/P95 llevan una espera de 429 dentro. Si no
+            # es cero, la latencia reportada mide la cuota del proveedor tanto
+            # como mide el sistema.
+            "turnos_con_espera_429": turnos_con_429,
             "resultados_llm": resultados,
             "por_modelo": modelos_vistos,
             "costo_usd": round(costo, 6) if not sin_tarifa else None,
@@ -382,4 +452,19 @@ def calcular_metricas(cfg: Config) -> dict[str, Any]:
             ),
         },
         "fuente_respuesta": fuentes,
+        "extraccion": {
+            "turnos_sin_extraccion": extraccion_fallida,
+            "turnos_sin_stt": stt_fallido,
+            # `error` y `timeout` de CUALQUIERA de los dos proveedores son
+            # fallos del agente; `json_invalido` es el modelo respondiendo mal, y
+            # una transcripción vacía con el STT en `ok` es el paciente callando.
+            # Se separan porque solo los primeros eximen de cobrar la repregunta
+            # (HD7, enmienda del 2026-08-10).
+            "turnos_sin_llm_real": (
+                extraccion_fallida.get("error", 0)
+                + extraccion_fallida.get("timeout", 0)
+                + stt_fallido.get("error", 0)
+                + stt_fallido.get("timeout", 0)
+            ),
+        },
     }

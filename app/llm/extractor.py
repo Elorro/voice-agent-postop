@@ -219,8 +219,6 @@ def mensaje_usuario(transcripcion: str, senal_preguntada: str | None) -> str:
     )
 
 
-_BLOQUE_JSON = re.compile(r"\{.*\}", re.DOTALL)
-
 
 def parsear_json(texto: str) -> dict[str, Any] | None:
     """Extrae el objeto JSON del texto del modelo. `None` si no hay ninguno.
@@ -236,11 +234,21 @@ def parsear_json(texto: str) -> dict[str, Any] | None:
     try:
         datos = json.loads(limpio)
     except json.JSONDecodeError:
-        encontrado = _BLOQUE_JSON.search(limpio)
-        if not encontrado:
+        # `raw_decode` desde la primera llave: lee UN valor JSON y se detiene
+        # donde termina, ignorando lo que venga detrás.
+        #
+        # Antes esto era un `re.search(r"\{.*\}", DOTALL)`, que es GREEDY y por
+        # tanto llega hasta la ÚLTIMA llave del texto. Medido el 2026-08-10 con
+        # `models/gemini-3.5-flash`: el modelo cierra el objeto y añade una `}`
+        # suelta al final. El regex se tragaba la llave de más y `json.loads`
+        # fallaba sobre un objeto que estaba perfectamente bien formado hasta
+        # esa basura. El síntoma era `json_invalido` con la extracción entera
+        # correcta dentro, es decir un turno perdido por un carácter.
+        inicio = limpio.find("{")
+        if inicio < 0:
             return None
         try:
-            datos = json.loads(encontrado.group(0))
+            datos, _ = json.JSONDecoder().raw_decode(limpio[inicio:])
         except json.JSONDecodeError:
             return None
     return datos if isinstance(datos, dict) else None
@@ -430,6 +438,13 @@ def extraer(
             tokens_out=_sumar(salida.tokens_out, segunda.tokens_out),
             reintentos=1,
             detalle=segunda.detalle,
+            # Los 429 de los DOS intentos: el reintento por JSON inválido no
+            # borra que el proveedor nos frenó antes.
+            reintentos_429=salida.reintentos_429 + segunda.reintentos_429,
+            espera_reintento_ms=salida.espera_reintento_ms + segunda.espera_reintento_ms,
+            tokens_razonamiento=_sumar(
+                salida.tokens_razonamiento, segunda.tokens_razonamiento
+            ),
         )
         datos = parsear_json(salida.texto) if salida.resultado == OK else None
 
@@ -458,6 +473,9 @@ def extraer(
                 salida.tokens_out,
                 reintentos,
                 salida.detalle,
+                salida.reintentos_429,
+                salida.espera_reintento_ms,
+                salida.tokens_razonamiento,
             ),
             resultado=resultado,
             notas=(f"extracción degradada a AUSENTE por «{resultado}»",),
@@ -480,6 +498,9 @@ def extraer(
             salida.tokens_out,
             reintentos,
             salida.detalle,
+            salida.reintentos_429,
+            salida.espera_reintento_ms,
+            salida.tokens_razonamiento,
         ),
         resultado=OK,
         notas=notas,

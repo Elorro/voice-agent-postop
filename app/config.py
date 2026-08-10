@@ -119,6 +119,20 @@ class Config:
     llm_max_tokens: int
     max_turnos_llamada: int
 
+    # Reintento ante HTTP 429 (ver app/llm/cliente.py). `llm_espera_429_ms` es el
+    # tope de sueño de TODA una invocación, no de cada espera: es lo que impide
+    # que un `Retry-After: 31` del nivel gratuito deje al paciente medio minuto
+    # oyendo silencio. Por defecto 2000 ms, que cubre la ráfaga corta y abandona
+    # de inmediato ante una cuota por minuto agotada.
+    llm_max_intentos: int
+    llm_espera_429_ms: int
+    llm_backoff_base_ms: int
+
+    # `reasoning_effort` que se manda al proveedor. Vacío = no se manda el campo.
+    # Ver la nota larga en app/llm/cliente.py: con un modelo que razona por
+    # defecto, este parámetro es la diferencia entre extraer y no extraer.
+    llm_razonamiento: str
+
     # Rango de plausibilidad de una temperatura DICHA por el paciente. NO es un
     # umbral clínico —los umbrales viven en politica/parametros.py y solo ahí—:
     # es el filtro de dominio del extractor, del mismo tipo que el dominio
@@ -248,6 +262,16 @@ def cargar_config() -> Config:
         redactor_activo=_booleano("REDACTOR_ACTIVO", True),
         llm_max_tokens=_entero("LLM_MAX_TOKENS", 220),
         max_turnos_llamada=_entero("MAX_TURNOS_LLAMADA", 12),
+        llm_max_intentos=_entero("LLM_MAX_INTENTOS", 3),
+        llm_espera_429_ms=_entero("LLM_ESPERA_429_MS", 2000),
+        llm_backoff_base_ms=_entero("LLM_BACKOFF_BASE_MS", 250),
+        # `omitir` es un centinela, no un valor que se mande: `_texto` colapsa la
+        # cadena vacía al default, así que dejar la variable en blanco NO sirve
+        # para suprimir el campo. Hace falta una palabra explícita.
+        llm_razonamiento=(
+            "" if _texto("LLM_RAZONAMIENTO", "none") == "omitir"
+            else _texto("LLM_RAZONAMIENTO", "none")
+        ),
         fiebre_min_c=_flotante("FIEBRE_MIN_C", 30.0),
         fiebre_max_c=_flotante("FIEBRE_MAX_C", 45.0),
         rag_activo=_booleano("RAG_ACTIVO", True),

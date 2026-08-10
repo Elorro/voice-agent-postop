@@ -62,6 +62,19 @@ class SalidaLLM:
     tokens_out: int | None = None
     reintentos: int = 0
     detalle: str = ""
+    # Reintentos por HTTP 429, contados aparte de `reintentos` a propósito: son
+    # dos fenómenos distintos y mezclarlos arruina el análisis. `reintentos` es
+    # «el modelo devolvió algo que no parsea» (culpa del modelo, sin espera).
+    # `reintentos_429` es «el proveedor nos frenó» (culpa de la cuota, CON
+    # espera). Un P50 que no distingue los dos no es el mismo número.
+    reintentos_429: int = 0
+    espera_reintento_ms: float = 0.0
+    # Tokens de razonamiento: los que el modelo genera y NO aparecen en
+    # `completion_tokens`. Se derivan de `total_tokens - prompt - completion`,
+    # que es aritmética sobre lo que el proveedor manda, no una estimación.
+    # Medido el 2026-08-10 en `models/gemini-3.5-flash`: 13 de prompt, 9 de
+    # completion, 229 de total. Ignorarlos reporta 9 donde se generaron 216.
+    tokens_razonamiento: int | None = None
 
     def a_registro(self, rol: str) -> dict[str, Any]:
         return {
@@ -71,6 +84,9 @@ class SalidaLLM:
             "tokens_out": self.tokens_out,
             "ms": round(self.ms, 1),
             "reintentos": self.reintentos,
+            "reintentos_429": self.reintentos_429,
+            "espera_reintento_ms": round(self.espera_reintento_ms, 1),
+            "tokens_razonamiento": self.tokens_razonamiento,
             "resultado": self.resultado,
         }
 

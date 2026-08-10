@@ -285,12 +285,23 @@ ni arranque de la reproducción.</p>
 <table><tbody>
 <tr><td>Llamadas / turnos</td><td>{d["n_llamadas"]} ({d["n_llamadas_cerradas"]} cerradas) / {d["n_turnos"]}</td></tr>
 <tr><td>Tokens entrada / salida</td><td>{consumo["tokens_entrada"]} / {consumo["tokens_salida"]}</td></tr>
+<tr><td>Tokens de razonamiento</td><td>{consumo["tokens_razonamiento"]} — generados y
+<strong>facturados como salida</strong>, pero fuera de <code>completion_tokens</code></td></tr>
 <tr><td>Invocaciones del LLM</td><td>{html.escape(json.dumps(consumo["invocaciones_llm"], ensure_ascii=False))}</td></tr>
 <tr><td>Resultados</td><td>{html.escape(json.dumps(consumo["resultados_llm"], ensure_ascii=False))}</td></tr>
-<tr><td>Reintentos</td><td>{consumo["reintentos_llm"]}</td></tr>
+<tr><td>Reintentos</td><td>{consumo["reintentos_llm"]} por JSON inválido ·
+{consumo["reintentos_429_llm"]} por HTTP 429 ({consumo["espera_429_ms"]} ms de espera
+en <strong>{consumo["turnos_con_espera_429"]} turnos</strong>, cuya latencia no es
+comparable con la del resto)</td></tr>
 <tr><td>Costo</td><td>{costo_txt}</td></tr>
 <tr><td>Audio transcrito</td><td>{consumo["segundos_audio_transcritos"]} s (costo no calculado: tarifa no declarada)</td></tr>
 <tr><td>Fuente de la respuesta</td><td>{html.escape(json.dumps(d["fuente_respuesta"], ensure_ascii=False))}</td></tr>
+<tr><td>Turnos sin extracción</td><td>{html.escape(json.dumps(d["extraccion"]["turnos_sin_extraccion"], ensure_ascii=False))}</td></tr>
+<tr><td>Turnos sin STT</td><td>{html.escape(json.dumps(d["extraccion"]["turnos_sin_stt"], ensure_ascii=False))}</td></tr>
+<tr><td>Turnos degradados</td><td><strong>{d["extraccion"]["turnos_sin_llm_real"]}</strong>
+— el agente no pudo oír al paciente o no pudo consultar al modelo. Un cierre por
+<code>AGOTAMIENTO</code> con este número distinto de cero <strong>no</strong> es un
+paciente que no supo contestar, y esos turnos <strong>no gastan presupuesto</strong></td></tr>
 <tr><td>RAG</td><td>{d["rag"]["consultas"]} consultas, {d["rag"]["citas"]} citas;
 {d["rag"]["respondidas_con_fuente"]} respondidas con fuente y
 {d["rag"]["limite_declarado"]} con límite declarado —
