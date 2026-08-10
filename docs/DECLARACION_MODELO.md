@@ -348,7 +348,13 @@ arranca y responde `/salud` **sin extractor, sin redactor y sin RAG**, de modo
 que ninguna afirmación de este documento sobre latencia, costo o contrato del
 extractor es verificable contra ella.
 
-| | Etiqueta | Digest |
-|---|---|---|
-| Imagen que sirve esta declaración | `ghcr.io/elorro/voice-agent-postop:v0.2.0` | `PENDIENTE_DE_PUBLICAR` — se rellena tras el `docker push` con `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.2.0` |
-| Publicada hoy en GHCR (esqueleto) | `ghcr.io/elorro/voice-agent-postop:v0.1.0` | `sha256:1419829fca3adedf0b01e2052713ce738ed399fe59de482529390e7bf24bb896` |
+| | Etiqueta | Digest | Estado |
+|---|---|---|---|
+| **Imagen que sirve esta declaración** | `ghcr.io/elorro/voice-agent-postop:v0.2.0` | `sha256:bf4c9d54db7a47c8d654683de26f2cd8f4561fe7dbaa901385c8f25eba180e56` | **Publicada y verificada el 2026-08-10**; pull anónimo comprobado |
+| Etiqueta anterior (esqueleto) | `ghcr.io/elorro/voice-agent-postop:v0.1.0` | `sha256:1419829fca3adedf0b01e2052713ce738ed399fe59de482529390e7bf24bb896` | Publicada. **No sirve para verificar nada de este documento** |
+
+Para comprobar contra qué imagen se está evaluando:
+
+```bash
+docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.2.0
+```

@@ -2406,29 +2406,38 @@ levante, G4 la llamada y G5 la consola, y las tres caen con la misma descarga.
 
   Presupuesto 400 MB: holgura **~74 MB**. Los 18 kB que separan v0.2.0 de la
   medición de 3.2 son código; el peso lo ponen los modelos vendorizados.
-- `[PENDIENTE — LO HACE LUIS]` **El `docker push` y el digest.** Comandos:
+- `[HECHO — 2026-08-10, lo ejecutó Luis]` **`v0.2.0` publicada en GHCR.** Push
+  exitoso y **pull anónimo verificado tras `docker logout ghcr.io`**, que es la
+  comprobación que faltó con v0.1.0 —aquel paquete nació privado y el fallo se
+  descubrió tarde—. Digest:
+
+  ```
+  sha256:bf4c9d54db7a47c8d654683de26f2cd8f4561fe7dbaa901385c8f25eba180e56
+  ```
+
+  Comando de verificación, que sigue siendo útil para quien evalúe:
 
   ```bash
-  docker push ghcr.io/elorro/voice-agent-postop:v0.2.0
   docker inspect --format='{{index .RepoDigests 0}}' \
     ghcr.io/elorro/voice-agent-postop:v0.2.0
   ```
 
-  **Dónde va el digest que salga**, tres sitios y el marcador es
-  `PENDIENTE_DE_PUBLICAR`:
-
-  | Archivo | Dónde |
-  |---|---|
-  | `README.md` | §«Correspondencia imagen ↔ repositorio», bloque de código del inicio |
-  | `README.md` | §9.5, filas «Digest de `v0.2.0`» y «Push de `v0.2.0` a GHCR» |
-  | `docs/DECLARACION_MODELO.md` | final de §5, tabla de etiquetas |
-
-  Falta además comprobar el **pull anónimo** (`docker logout ghcr.io && docker
-  pull …:v0.2.0`) y que el paquete siga **público**: con v0.1.0 el paquete nació
-  privado y el fallo se descubrió tarde.
-- `[HECHO]` **Mientras no se empuje, el README dice que un `pull` fallará con
-  `manifest unknown`**, y por qué eso es preferible a descargar en silencio algo
-  sin turno de voz.
+  El digest quedó escrito en los tres sitios que lo esperaban —README §inicio,
+  README §9.5 y `DECLARACION_MODELO.md` §5—, y el marcador
+  `PENDIENTE_DE_PUBLICAR` ya no existe en el repositorio.
+- `[CORRECCIÓN]` **Los tres marcadores se rellenaron con `sed` y quedaron
+  contradiciéndose:** las tres líneas conservaban el texto «se rellena tras el
+  push» al lado de un digest ya real, y en el README seguían en pie la fila
+  «falta el `docker push`» y el recuadro «⚠️ hasta que se ejecute el push, lo
+  publicado sigue siendo v0.1.0». Reescritos: el digest se declara como hecho
+  verificado con su fecha, el comando queda **como comando de verificación** y no
+  como instrucción pendiente, y el recuadro pasa a advertir de lo que sí sigue
+  siendo cierto — que `v0.1.0` **no es una versión anterior de esto, es otra
+  cosa**, y quien la descargue por error verá un sistema que levanta y no hace
+  nada de lo que se evalúa.
+- `[HECHO]` **`G2, G4 y G5 dejan de depender de una descarga equivocada.** Un
+  `docker compose pull` con el `compose.yaml` entregado trae ya el turno de voz,
+  el RAG y la consola.
 
 ### El COPY, verificado — y ahora lo verifica el build
 
@@ -2493,13 +2502,17 @@ levante, G4 la llamada y G5 la consola, y las tres caen con la misma descarga.
 
 ### Deuda que este cambio deja abierta
 
-- `[PENDIENTE]` **El push, el digest, el pull anónimo y la visibilidad pública**
-  del paquete `v0.2.0`. Hasta entonces G2 sigue rota para quien use `pull`.
-- `[ESPECULACIÓN]` **La imagen no se ha probado arrancando desde el `pull`.** Se
-  verificó construida en local; `docker load` de un `docker save` no es lo mismo
-  que un pull desde el registro, y el fallo de v0.1.0 (paquete privado) estuvo
-  justamente en el registro, no en la imagen.
-- `[HECHO]` **§9.1 (levantamiento) sigue sin números** y no puede tenerlos hasta
-  que exista una etiqueta publicada que descargar. La corrida de cronometraje de
-  F3.10 quedó invalidada por el caché local; la nueva necesita, además de
-  `docker image rm`, que el `pull` tenga algo que traer.
+- `[CERRADO el mismo día]` ~~El push, el digest, el pull anónimo y la visibilidad
+  pública del paquete `v0.2.0`.~~ Hechos y verificados el **2026-08-10**, digest
+  `sha256:bf4c9d54…180e56`.
+- `[ESPECULACIÓN]` **Que el pull anónimo funcione no prueba que el contenedor
+  arranque desde esa descarga.** El pull verifica autorización y transferencia;
+  el arranque se probó sobre la imagen construida en local. Son el mismo digest,
+  así que los bytes coinciden — pero nadie ha hecho `docker image rm` seguido de
+  `pull` y `up -d` en una máquina limpia, y eso es justo lo que hará el jurado.
+  Se resuelve solo en la corrida de cronometraje pendiente.
+- `[PENDIENTE]` **§9.1 (levantamiento) sigue sin números.** Ya existe la etiqueta
+  publicada que faltaba, así que el bloqueo desapareció: la corrida de
+  cronometraje de F3.10 quedó invalidada por el caché local y la nueva solo
+  necesita `docker image rm` previo. **Es lo único que separa a G2 de estar
+  medida.**

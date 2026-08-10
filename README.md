@@ -7,26 +7,31 @@ Agente de voz en español para seguimiento postoperatorio.
 servidos por Groq y Google fueron retirados por sus proveedores. Qué usa esta
 solución y por qué cumple: **[`docs/DECLARACION_MODELO.md`](docs/DECLARACION_MODELO.md)**.
 
-**Correspondencia imagen ↔ repositorio.** `compose.yaml` apunta a
-`ghcr.io/elorro/voice-agent-postop:**v0.2.0**`, que es la imagen con el turno de
-voz, el RAG y la consola. Digest:
+**Correspondencia imagen ↔ repositorio.** La imagen **publicada** en GHCR y a la
+que apunta `compose.yaml` es **`ghcr.io/elorro/voice-agent-postop:v0.2.0`**, con
+el turno de voz, el RAG y la consola. Su digest, publicado y verificado el
+**2026-08-10**:
 
 ```
-PENDIENTE_DE_PUBLICAR — se rellena tras el push, con:
+sha256:bf4c9d54db7a47c8d654683de26f2cd8f4561fe7dbaa901385c8f25eba180e56
+```
+
+Para comprobarlo en su máquina:
+
+```bash
 docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.2.0
 ```
 
 | | Etiqueta | Qué contiene | Estado |
 |---|---|---|---|
-| **v0.2.0** | `:v0.2.0` | Turno de voz, RAG con citas, consola de administración | **Construida y verificada localmente; falta el `docker push`** |
+| **v0.2.0** | `:v0.2.0` | Turno de voz, RAG con citas, consola de administración | **Publicada.** Push y **pull anónimo** verificados el 2026-08-10 |
 | v0.1.0 | `:v0.1.0` | Esqueleto del commit `f3-0-cerrada`, **sin** turno de voz, **sin** RAG y **sin** consola | Publicada, digest `sha256:1419829fca3adedf0b01e2052713ce738ed399fe59de482529390e7bf24bb896` |
 
-> **⚠️ Hasta que se ejecute el `docker push`, lo publicado en GHCR sigue siendo
-> v0.1.0 —el esqueleto—.** Un `docker compose pull` con este `compose.yaml`
-> fallará con `manifest unknown` mientras la etiqueta no exista, que es
-> preferible a descargar en silencio algo que no tiene turno de voz. Para probar
-> mientras tanto: `docker compose build` (§2). Decir aquí que el jurado ya puede
-> descargar v0.2.0 sería afirmar que existe algo que todavía no se ha empujado.
+> **La etiqueta importa: `v0.1.0` no es una versión anterior de esto, es otra
+> cosa.** Corresponde al esqueleto `f3-0-cerrada`, que arranca, responde `/salud`
+> y **no tiene turno de voz, ni RAG, ni consola**. Quien la descargue por error
+> verá un sistema que levanta y no hace nada de lo que se evalúa. `compose.yaml`
+> ya apunta a `v0.2.0`; si clonó el repositorio, no tiene que hacer nada.
 
 > **Estado: turno de voz de punta a punta, RAG con citas y consola de
 > administración.** El contenedor arranca, carga sus modelos, reporta su estado
@@ -1102,8 +1107,9 @@ Fecha: **2026-08-10**. Detalle completo, con los comandos:
 | **Tamaño de `v0.2.0`, comprimida** | **326,0 MB** | `docker save ghcr.io/elorro/voice-agent-postop:v0.2.0 \| wc -c` → `326009344` (**2026-08-10**, tras `docker build --no-cache`) |
 | **`v0.2.0` en disco** | **1,11 GB** | `docker images ghcr.io/elorro/voice-agent-postop` |
 | **Contenido de `v0.2.0`** | **40 archivos**, idénticos al árbol | `docker run --rm --entrypoint sh … -c 'cd /app && find app politica configuracion -type f'` contra el mismo `find` del repositorio: `diff` vacío |
-| **Digest de `v0.2.0`** | **PENDIENTE_DE_PUBLICAR** | Se rellena tras el push: `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.2.0` |
-| **Push de `v0.2.0` a GHCR** | **PENDIENTE** | `docker push ghcr.io/elorro/voice-agent-postop:v0.2.0` |
+| **Digest de `v0.2.0`** | `sha256:bf4c9d54db7a47c8d654683de26f2cd8f4561fe7dbaa901385c8f25eba180e56` | `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/elorro/voice-agent-postop:v0.2.0` (2026-08-10) |
+| **Push de `v0.2.0` a GHCR** | **exitoso** (2026-08-10) | `docker push ghcr.io/elorro/voice-agent-postop:v0.2.0` |
+| **Pull anónimo de `v0.2.0`** | **OK**, sin credenciales | `docker logout ghcr.io && docker pull ghcr.io/elorro/voice-agent-postop:v0.2.0` (2026-08-10) |
 | Tamaño de la imagen del sub-paso 3.2, comprimida | **326,0 MB** | `docker save ghcr.io/elorro/voice-agent-postop:v0.1.0 \| wc -c` → `325991424` (2026-08-10) |
 | `indice_base/` dentro de la imagen | **0 entradas** (excluido) | `docker run --rm … sh -c 'ls -A /opt/indice_base \| wc -l'` → `0`; `/app` solo trae `app configuracion datos politica` |
 | Tamaño de la imagen del sub-paso 3.1, comprimida | **319,3 MB** | `docker save … \| wc -c` → `319335424` (2026-08-10, tras `build --no-cache`) |
