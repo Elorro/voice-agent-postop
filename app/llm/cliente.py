@@ -79,6 +79,29 @@ def _segundos_de_retry_after(valor: str) -> float | None:
     return max(0.0, fecha.timestamp() - time.time())
 
 
+def _mensaje_del_cuerpo(respuesta: httpx.Response | None) -> str:
+    """`error.message` del cuerpo, en las dos formas que usan los proveedores.
+
+    Objeto `{"error": {...}}` (OpenAI, Ollama) y ARRAY `[{"error": {...}}]`
+    (Gemini). Devuelve cadena vacía si no hay nada legible: esto es diagnóstico,
+    nunca contrato, y no puede lanzar.
+    """
+    if respuesta is None:
+        return ""
+    try:
+        cuerpo = respuesta.json()
+    except Exception:  # noqa: BLE001
+        return (getattr(respuesta, "text", "") or "").strip()[:200]
+    if isinstance(cuerpo, list):
+        cuerpo = next((e for e in cuerpo if isinstance(e, dict) and "error" in e), {})
+    if not isinstance(cuerpo, dict):
+        return ""
+    error = cuerpo.get("error")
+    if isinstance(error, dict):
+        return str(error.get("message", ""))[:200]
+    return str(error or "")[:200]
+
+
 def _espera_pedida(respuesta: httpx.Response) -> float | None:
     """Segundos que el proveedor pide esperar, o `None` si no lo dice.
 
@@ -242,9 +265,18 @@ class ClienteLLM:
                 )
             except Exception as exc:  # noqa: BLE001 - se reporta, no propaga
                 ms = (time.perf_counter() - inicio) * 1000
-                _log.warning("LLM: fallo tras %.0f ms: %s", ms, exc)
+                # El cuerpo del error, cuando lo hay, es lo ÚNICO que dice qué
+                # pasó: httpx solo aporta «Client error '400 Bad Request'». El
+                # caso que lo obligó (F3.9): Ollama respondía `"llama3.2:3b" does
+                # not support thinking` y esa frase no llegaba a ningún log, así
+                # que el perfil C aparecía roto sin causa visible.
+                motivo = _mensaje_del_cuerpo(getattr(exc, "response", None))
+                detalle = f"{exc}"
+                if motivo:
+                    detalle = f"{exc} — el proveedor dice: {motivo}"
+                _log.warning("LLM: fallo tras %.0f ms: %s", ms, detalle)
                 return SalidaLLM(
-                    "", ms, ERROR, self._modelo, detalle=str(exc)[:200],
+                    "", ms, ERROR, self._modelo, detalle=detalle[:300],
                     reintentos_429=reintentos_429, espera_reintento_ms=espera_total_ms,
                 )
             break

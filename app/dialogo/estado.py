@@ -67,6 +67,16 @@ class Llamada:
     # rastro sería tan opaco como cobrarlo: si un fallo exime, se ve en el cierre.
     turnos_sin_stt: dict[str, int] = field(default_factory=dict)
 
+    # Turnos CONSECUTIVOS que el agente no logró procesar por fallo propio. Es el
+    # contador de la condición de parada que la enmienda a HD7 dejó abierta: si
+    # ningún turno cobra presupuesto, `AGOTAMIENTO` no llega nunca y la llamada
+    # gira repitiendo la misma pregunta. Se pone a cero en cuanto un turno se
+    # procesa: lo que termina una llamada es la caída SOSTENIDA, no un tropiezo.
+    turnos_sin_procesar_seguidos: int = 0
+    # El máximo alcanzado, para que el cierre lo declare aunque se haya
+    # reiniciado el contador antes de terminar.
+    max_turnos_sin_procesar_seguidos: int = 0
+
     def cobrar_pregunta(self, senal: str) -> None:
         """Contabilidad de HD7: el módulo de política LEE el presupuesto, el
         llamador lo COBRA. Y se cobra **al emitir la pregunta**, no al recibir
@@ -89,6 +99,22 @@ class Llamada:
         """Cuenta el turno si el agente no llegó a oír lo que dijo el paciente."""
         if resultado != "ok":
             self.turnos_sin_stt[resultado] = self.turnos_sin_stt.get(resultado, 0) + 1
+
+    def anotar_procesamiento(self, fallo_del_agente: bool) -> int:
+        """Actualiza la racha de turnos que el agente no pudo procesar.
+
+        Misma condición que exime presupuesto (enmienda a HD7): fallo de UNO DE
+        LOS DOS proveedores. Devuelve la racha vigente tras este turno.
+        """
+        if fallo_del_agente:
+            self.turnos_sin_procesar_seguidos += 1
+            self.max_turnos_sin_procesar_seguidos = max(
+                self.max_turnos_sin_procesar_seguidos,
+                self.turnos_sin_procesar_seguidos,
+            )
+        else:
+            self.turnos_sin_procesar_seguidos = 0
+        return self.turnos_sin_procesar_seguidos
 
     def degradacion(self) -> dict[str, Any]:
         """Resumen para el cierre.
@@ -113,6 +139,9 @@ class Llamada:
             "turnos_sin_llm_real": sin_llm,
             "turnos_totales": self.turno_idx,
             "hubo_degradacion": bool(por_causa or stt_por_causa),
+            # La racha máxima, no el total: es lo que distingue «el proveedor
+            # parpadeó tres veces sueltas» de «el proveedor estuvo caído».
+            "racha_maxima_sin_procesar": self.max_turnos_sin_procesar_seguidos,
         }
 
     def a_json(self) -> dict[str, Any]:

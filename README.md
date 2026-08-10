@@ -183,10 +183,11 @@ una fila por componente.
 > |---|---|
 > | `no se pudo verificar ahora: …` | **Recargue.** Fue un timeout, un 429 o un 5xx del proveedor. No dice nada sobre su configuración |
 > | `el proveedor respondió y NO sirve «…»` | Recargar **no** lo arregla: corrija `LLM_MODELO` en `.env` (§4) |
+> | `el proveedor LISTA «…» pero RECHAZA la inferencia` | Recargar **no** lo arregla. El modelo existe pero no acepta lo que el turno le manda; el mensaje del proveedor va incluido y dice qué parámetro sobra (§4) |
 > | `el proveedor rechaza la clave (HTTP 401)` | Revise `LLM_API_KEY` (§4) |
 >
 > En JSON el mismo dato viaja sin interpretar frases, en `componentes[].datos.diagnostico`:
-> `transitorio`, `modelo_inexistente`, `clave`, `servidor_local_caido` u `ok`.
+> `transitorio`, `modelo_inexistente`, `no_infiere`, `clave`, `servidor_local_caido` u `ok`.
 
 Lo que debe ver hoy, con la clave puesta:
 
@@ -201,11 +202,26 @@ Lo que debe ver hoy, con la clave puesta:
 | Dataset | OK o AVISO | AVISO si no montó el dataset; no bloquea |
 
 **LLM y STT son dos sondas separadas porque son dos servicios distintos**, con su
-propia URL, su propia clave y su propio modelo. La del LLM no se conforma con
-validar la clave: comprueba contra el proveedor que el modelo configurado
-**existe**. El modo de falla que motivó esa sonda es «clave buena, modelo
-apagado», que pasa toda verificación de credenciales y revienta en la primera
-inferencia — ver [`docs/DECLARACION_MODELO.md`](docs/DECLARACION_MODELO.md).
+propia URL, su propia clave y su propio modelo. La del LLM hace **tres**
+comprobaciones, y cada una existe por un fallo que se coló por la anterior:
+
+1. **La clave sirve.** El modo de falla obvio.
+2. **El modelo existe** en el catálogo del proveedor. Motivo: «clave buena,
+   modelo apagado» pasa toda verificación de credenciales y revienta en la
+   primera inferencia — ver
+   [`docs/DECLARACION_MODELO.md`](docs/DECLARACION_MODELO.md).
+3. **El proveedor acepta una inferencia real**, de pocos tokens y **con los
+   mismos parámetros que enviará el turno**. Motivo, medido el 2026-08-10:
+   `/salud` decía LISTO y el contenedor estaba `healthy` mientras el LLM
+   rechazaba el **100 %** de las inferencias con `HTTP 400 "llama3.2:3b" does not
+   support thinking`. `GET /models` respondía 200 sin problema. **Listar un
+   modelo no es servirlo.**
+
+La tercera se paga **una sola vez por arranque** (`SALUD_INFERENCIA=arranque`):
+tras el primer éxito no se repite, y un fallo sí se reintenta en cada sondeo,
+que es cuando hace falta. Cuesta **~0,5 s** en el perfil C y **~0,9 s** en el
+perfil A, medidos. `SALUD_INFERENCIA=0` la desactiva.
+
 Cada fila lleva el perfil y el proveedor en uso, para que se lean de un vistazo.
 
 **El índice es NO BLOQUEANTE, y es una decisión, no un descuido.** Sin índice el
@@ -362,10 +378,20 @@ Si una clave no funciona o se agotó su cuota:
 
   y en `.env`: `LLM_BASE_URL=http://llm-local:11434/v1`, `LLM_MODELO=llama3.2:3b`,
   `LLM_PERFIL=local`, `LLM_API_KEY=` vacía, **`EXTRACTOR_TIMEOUT_MS=20000`,
-  `REDACTOR_TIMEOUT_MS=8000` y `RAG_TIMEOUT_MS=30000`** — las tres no son
-  opcionales: con los valores del perfil A, un modelo local cae en timeout en
-  todos los turnos. Las líneas exactas están comentadas en `.env.example`, listas
-  para descomentar.
+  `REDACTOR_TIMEOUT_MS=8000`, `RAG_TIMEOUT_MS=30000` y `LLM_RAZONAMIENTO=`
+  vacía** — las cuatro no son opcionales. Los tres timeouts, porque con los
+  valores del perfil A un modelo local cae en timeout en todos los turnos.
+  `LLM_RAZONAMIENTO` **vacía**, porque el perfil A necesita
+  `reasoning_effort=low` y Ollama responde a eso
+  `HTTP 400 "llama3.2:3b" does not support thinking`: con la variable vacía el
+  campo no se envía. Las líneas exactas están comentadas en `.env.example`,
+  dentro del bloque del perfil, listas para descomentar.
+
+  > **No deje `LLM_RAZONAMIENTO` repetida en el archivo.** Si aparece dos veces
+  > **gana la última**, así que un `LLM_RAZONAMIENTO=low` más abajo pisa el
+  > `LLM_RAZONAMIENTO=` del bloque de perfil y el modelo local vuelve a fallar.
+  > Por eso la variable vive **dentro** de cada bloque y no en una sección
+  > aparte.
 
   **El perfil C no tiene cuota ni red.** Es la única ruta que no puede quedarse
   sin peticiones a mitad de una demostración.
@@ -379,6 +405,7 @@ Reinicie con `docker compose up -d` (con `sudo` en Linux) después de tocar `.en
 | `LLM_MODELO está vacío…` | No puso el identificador del modelo. El mensaje trae el valor exacto que va en cada perfil |
 | `el proveedor rechaza la clave (HTTP 401)` | La clave llegó pero no es válida: sobra un espacio, falta un carácter, o está revocada |
 | `el proveedor respondió y NO sirve «…»; … modelos disponibles que coinciden: …` | La clave está bien y el modelo no existe en ese proveedor. Copie uno de los que lista. **Recargar no lo arregla** |
+| `el proveedor LISTA «…» pero RECHAZA la inferencia (HTTP 400): …` | El modelo existe y aun así no acepta lo que el turno le manda. El mensaje del proveedor viene incluido y dice cuál es el parámetro. Causa típica: `LLM_RAZONAMIENTO` con un valor que ese modelo no soporta — **déjelo vacío si el modelo no razona** |
 | `no se pudo verificar ahora: …` | La comprobación no llegó a completarse (timeout, `429` o `5xx`). **No dice nada sobre su configuración: recargue una vez** (§3) |
 | `el proveedor no es alcanzable: … 400 Bad Request …` **en el perfil A** | Casi siempre es **la clave**, no la red: Google responde 400 —no 401— a una clave inválida o al marcador sin sustituir. Revise `LLM_API_KEY` antes de revisar la conexión |
 | `ausente` | El archivo `.env` no existe o la línea quedó vacía |
@@ -398,6 +425,18 @@ detecta el navegador por energía.
 > README del reto reserva `GET /consola` para la consola de administración y la
 > compuerta G5 se evalúa sobre esa ruta exacta, así que el cliente de voz se mudó
 > a `/llamada`.
+
+> **Si los dos proveedores externos se caen, la llamada termina sola y lo dice.**
+> Tras **3 turnos seguidos** en que el agente no logra oír al paciente o no logra
+> consultar al modelo (`MAX_TURNOS_SIN_PROCESAR`), el seguimiento cierra con
+> criterio **`FALLO_DE_INFRAESTRUCTURA`** y **sin clase clínica**: no hubo
+> señales que decidir, y `politica.decidir` es el único que clasifica. El caso
+> **escala a una persona igual** —un paciente al que no se pudo evaluar no es un
+> paciente sano— y el guion se lo dice al paciente sin insinuar que esté bien.
+>
+> Es deliberadamente distinto de `AGOTAMIENTO`, que significa «le pregunté y no
+> logré confirmar lo que me dijo». Aquí no se le llegó a preguntar de verdad, y
+> `degradacion.racha_maxima_sin_procesar` en el cierre lo declara.
 
 Si el paciente **pregunta algo** («¿me puedo bañar?», «¿esto es normal?»), el
 agente responde desde el corpus y deja la cita —documento y página— en
@@ -559,6 +598,9 @@ lo verifica y falla si alguna se cuela.
 | `LLM_MODELO` | *(vacío)* | Identificador exacto del modelo. Obligatoria, **sin default a propósito** |
 | `LLM_API_KEY` | *(vacía)* | Clave del proveedor del LLM. Obligatoria salvo en perfil local |
 | `LLM_PERFIL` | `remoto` | `remoto` \| `local`. Informativo, lo muestra `/salud` |
+| `LLM_RAZONAMIENTO` | `none` *(si la variable no existe)* | `reasoning_effort` a enviar. **Escrita y en blanco = el campo no se envía**, que es lo que exige el perfil C. Vive **dentro de cada bloque de perfil** en `.env.example` |
+| `MAX_TURNOS_SIN_PROCESAR` | `3` | Turnos **seguidos** sin poder procesar (STT o LLM caídos) antes de cerrar con `FALLO_DE_INFRAESTRUCTURA`. Es la condición de parada |
+| `SALUD_INFERENCIA` | `arranque` | Inferencia real de comprobación: `arranque` (una vez por proceso), `siempre`, `0` |
 | `EXTRACTOR_TIMEOUT_MS` | `2500` | Vive **dentro de cada perfil** en `.env.example`. 2500 remoto, **20000 local** |
 | `RAG_TIMEOUT_MS` | `4000` | Igual: **30000** con el perfil local |
 | `STT_API_KEY` | *(vacía)* | Clave de Groq para la transcripción. Obligatoria |

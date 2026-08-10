@@ -134,8 +134,19 @@ def turno(
         segundos_audio=(duracion_audio_ms / 1000.0) if duracion_audio_ms else None,
     )
     if not llamada.abierta:
+        # El motivo tiene que decir la verdad: una llamada cerrada sin clase no
+        # se «clasificó». `FALLO_DE_INFRAESTRUCTURA` y `ERROR_TECNICO` terminan
+        # con `clase: null`, y ponerles «clasificada» en el registro haría que
+        # una caída de proveedor se contara como una evaluación clínica.
+        motivos = {
+            "FALLO_DE_INFRAESTRUCTURA": "fallo_de_infraestructura",
+            "ERROR_TECNICO": "error_tecnico",
+        }
         payload["cierre"] = orquestador.cerrar_llamada(
-            cfg, llamada, ALMACEN, motivo="clasificada"
+            cfg,
+            llamada,
+            ALMACEN,
+            motivo=motivos.get(llamada.criterio or "", "clasificada"),
         )
     return JSONResponse(payload)
 

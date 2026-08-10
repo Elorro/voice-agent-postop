@@ -27,6 +27,8 @@ no depende de ninguna: solo librería estándar.
 | `test_registro.py` | `turnos.jsonl`: escritura, parcheo de la telemetría, percentiles y consumo leídos del archivo. |
 | `test_turno.py` | El turno completo con los tres servicios externos sustituidos por dobles: orden de etapas, presupuesto cobrado al emitir, y cada degradación bajando un escalón sin tumbar la llamada. |
 | `test_import_unico_politica.py` | Un solo `import politica` en todo el árbol, sobre los archivos rastreados por git. |
+| `test_llm_razonamiento.py` | Cuándo viaja `reasoning_effort` y cuándo NO. Con `LLM_RAZONAMIENTO` vacía la clave **no aparece en el cuerpo** (es lo que el perfil C necesita); con un valor explícito sí (es lo que el perfil A necesita). Ausente ≠ vacía. |
+| `test_salud_llm.py` | La sonda del LLM. **Listar un modelo no es servirlo**: una inferencia real con los mismos parámetros del turno, y su fallo distinguible de «no alcanzable». Más las categorías de diagnóstico: `transitorio` → recargue; `no_infiere` y `modelo_inexistente` → recargar no sirve. |
 | `test_rag_troceo.py` | Troceo y solape contra el techo de 256 tokens del embedder, atribución de página, determinismo, y detección de idioma. |
 | `test_rag_duplicados.py` | Duplicados **exactos y casi exactos**: el corpus trae de los dos y el SHA-256 solo ve los primeros. |
 | `test_rag_recuperacion.py` | **Umbral de suficiencia.** Por debajo del umbral la recuperación devuelve vacío; el umbral se aplica fragmento a fragmento, no solo al mejor. |

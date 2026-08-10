@@ -39,6 +39,34 @@ def _texto(variable: str, defecto: str) -> str:
     return os.environ.get(variable, "").strip() or defecto
 
 
+def _razonamiento() -> str:
+    """`reasoning_effort` a enviar, o cadena vacía para NO enviar el campo.
+
+    Tres estados, y distinguir los dos primeros es exactamente lo que costó el
+    perfil C entero (F3.9):
+
+    | `LLM_RAZONAMIENTO` en el entorno | Qué se manda |
+    |---|---|
+    | **ausente** | `none` — el default histórico, que el perfil A necesita |
+    | **presente y vacía** (`LLM_RAZONAMIENTO=`) | **nada**: el campo no viaja |
+    | cualquier otro valor | ese valor, tal cual |
+
+    `omitir` se conserva como alias de la cadena vacía porque está publicado en
+    `docs/DECLARACION_MODELO.md` §5 y en `.env.example`; romperlo obligaría a
+    quien siguió esa tabla a descubrirlo con un 400 en la demostración.
+
+    **Por qué no basta `_texto`:** colapsa la cadena vacía al default, así que
+    `LLM_RAZONAMIENTO=` daba `none` — un valor que Ollama sí acepta, pero que no
+    es lo que el operador escribió. El que rompe es `low`, y con `_texto` no
+    había forma de pedir «ninguno» desde `.env`.
+    """
+    bruto = os.environ.get("LLM_RAZONAMIENTO")
+    if bruto is None:
+        return "none"
+    valor = bruto.strip()
+    return "" if valor in ("", "omitir") else valor
+
+
 def _entero(variable: str, defecto: int) -> int:
     try:
         return int(_texto(variable, str(defecto)))
@@ -119,6 +147,14 @@ class Config:
     llm_max_tokens: int
     max_turnos_llamada: int
 
+    # Turnos CONSECUTIVOS que el agente no logra procesar por fallo de alguno de
+    # sus dos proveedores antes de cerrar la llamada con
+    # `FALLO_DE_INFRAESTRUCTURA`. Es la condición de parada que la enmienda a HD7
+    # dejó sin cubrir: si ningún turno cobra presupuesto, `AGOTAMIENTO` no llega
+    # nunca y el agente repite la misma pregunta hasta el tope de turnos.
+    # Por qué 3: ver app/dialogo/orquestador.py y docs/bitacora.md F3.9.
+    max_turnos_sin_procesar: int
+
     # Reintento ante HTTP 429 (ver app/llm/cliente.py). `llm_espera_429_ms` es el
     # tope de sueño de TODA una invocación, no de cada espera: es lo que impide
     # que un `Retry-After: 31` del nivel gratuito deje al paciente medio minuto
@@ -128,9 +164,12 @@ class Config:
     llm_espera_429_ms: int
     llm_backoff_base_ms: int
 
-    # `reasoning_effort` que se manda al proveedor. Vacío = no se manda el campo.
-    # Ver la nota larga en app/llm/cliente.py: con un modelo que razona por
-    # defecto, este parámetro es la diferencia entre extraer y no extraer.
+    # `reasoning_effort` que se manda al proveedor. Vacío = NO se manda el campo,
+    # y esa es la configuración del perfil C: Ollama responde 400 «does not
+    # support thinking» ante `low`. Ver `_razonamiento()` y la nota larga en
+    # app/llm/cliente.py: con un modelo que razona por defecto, este parámetro es
+    # la diferencia entre extraer y no extraer; con uno que no razona, es la
+    # diferencia entre inferir y no inferir.
     llm_razonamiento: str
 
     # Rango de plausibilidad de una temperatura DICHA por el paciente. NO es un
@@ -172,6 +211,12 @@ class Config:
     salud_timeout_s: float
     salud_cache_s: float
     salud_comprobar_red: bool
+    # Inferencia real de comprobación: `arranque` (una vez por proceso, hasta que
+    # salga bien), `siempre` (cada sondeo) o `0` (nunca). Existe porque listar
+    # modelos NO es servirlos: el 2026-08-10 `/salud` dio LISTO con un LLM que
+    # rechazaba el 100 % de las inferencias. Ver app/salud.py::_probar_inferencia.
+    salud_inferencia: str
+    salud_inferencia_timeout_ms: int
     nivel_log: str
 
     @property
@@ -262,16 +307,11 @@ def cargar_config() -> Config:
         redactor_activo=_booleano("REDACTOR_ACTIVO", True),
         llm_max_tokens=_entero("LLM_MAX_TOKENS", 220),
         max_turnos_llamada=_entero("MAX_TURNOS_LLAMADA", 12),
+        max_turnos_sin_procesar=_entero("MAX_TURNOS_SIN_PROCESAR", 3),
         llm_max_intentos=_entero("LLM_MAX_INTENTOS", 3),
         llm_espera_429_ms=_entero("LLM_ESPERA_429_MS", 2000),
         llm_backoff_base_ms=_entero("LLM_BACKOFF_BASE_MS", 250),
-        # `omitir` es un centinela, no un valor que se mande: `_texto` colapsa la
-        # cadena vacía al default, así que dejar la variable en blanco NO sirve
-        # para suprimir el campo. Hace falta una palabra explícita.
-        llm_razonamiento=(
-            "" if _texto("LLM_RAZONAMIENTO", "none") == "omitir"
-            else _texto("LLM_RAZONAMIENTO", "none")
-        ),
+        llm_razonamiento=_razonamiento(),
         fiebre_min_c=_flotante("FIEBRE_MIN_C", 30.0),
         fiebre_max_c=_flotante("FIEBRE_MAX_C", 45.0),
         rag_activo=_booleano("RAG_ACTIVO", True),
@@ -324,6 +364,13 @@ def cargar_config() -> Config:
         salud_timeout_s=_flotante("SALUD_TIMEOUT_S", 6.0),
         salud_cache_s=_flotante("SALUD_CACHE_S", 10.0),
         salud_comprobar_red=_booleano("SALUD_COMPROBAR_RED", True),
+        salud_inferencia=_texto("SALUD_INFERENCIA", "arranque").lower(),
+        # 10 s, no los 6 del sondeo de `/models`: en el perfil C la PRIMERA
+        # inferencia carga el modelo en memoria y eso son segundos, no
+        # milisegundos. Si aun así no cabe, el fallo sale como `transitorio` y el
+        # siguiente sondeo lo reintenta — que es el comportamiento correcto
+        # mientras Ollama termina de cargar.
+        salud_inferencia_timeout_ms=_entero("SALUD_INFERENCIA_TIMEOUT_MS", 10000),
         nivel_log=_texto("NIVEL_LOG", "INFO").upper(),
     )
 

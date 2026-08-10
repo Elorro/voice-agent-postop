@@ -482,18 +482,139 @@ def test_el_proveedor_caido_no_gasta_presupuesto_ni_cierra_por_agotamiento(
         if payload["fin"]:
             break
 
-    # Lo que se está fijando: seis turnos con el proveedor caído NO consumieron
-    # ni una repregunta más allá de la apertura, así que la llamada sigue viva y
-    # NO cerró por agotar un presupuesto que el paciente nunca gastó.
+    # Lo que se está fijando: los turnos con el proveedor caído NO consumieron
+    # ni una repregunta más allá de la apertura, así que la llamada NO cerró por
+    # agotar un presupuesto que el paciente nunca gastó.
     assert llamada.preguntas_totales == gastadas_tras_apertura
     assert llamada.criterio != "AGOTAMIENTO"
-    assert llamada.abierta
+
+    # Y desde F3.9 tampoco se queda girando: al tercer turno seguido sin poder
+    # procesar, cierra con criterio propio. Hasta F3.9 este test exigía
+    # `llamada.abierta`, que era precisamente el defecto — eximir TODOS los
+    # turnos eliminaba la única condición de parada.
+    assert not llamada.abierta
+    assert llamada.criterio == "FALLO_DE_INFRAESTRUCTURA"
+    assert llamada.clase is None
+    assert llamada.turno_idx == cfg.max_turnos_sin_procesar
 
     cierre = orquestador.cerrar_llamada(cfg, llamada, almacen, motivo="prueba")
     degradacion = cierre["degradacion"]
-    assert degradacion["turnos_sin_llm_real"] == len(dichas)
-    assert degradacion["turnos_sin_extraccion"] == {"error": len(dichas)}
+    assert degradacion["turnos_sin_llm_real"] == cfg.max_turnos_sin_procesar
+    assert degradacion["turnos_sin_extraccion"] == {
+        "error": cfg.max_turnos_sin_procesar
+    }
     assert degradacion["hubo_degradacion"] is True
+    assert degradacion["racha_maxima_sin_procesar"] == cfg.max_turnos_sin_procesar
+
+
+# --------------------------------------------------------------------------- #
+# F3.9 — TERMINACIÓN: eximir todos los turnos no puede dejar la llamada sin final
+# --------------------------------------------------------------------------- #
+# La enmienda a HD7 (F3.7) dejó de cobrar presupuesto cuando el turno no llegó a
+# procesarse. Con el proveedor caído de forma PERMANENTE eso elimina la única
+# condición de parada: ningún turno cobra, AGOTAMIENTO no llega nunca y el agente
+# repite la misma pregunta hasta el tope de turnos. Registro del caso real:
+# 9 turnos, «1 de 6 preguntas», 0 tokens de entrada y 0 de salida.
+def test_el_proveedor_caido_permanente_TERMINA_la_llamada(tmp_path: Path) -> None:
+    cfg = config_de_prueba(tmp_path)
+    almacen = Almacen()
+    llm = LLMFalso(extractor_error=True, redactor_timeout=True)
+    # Muchos más turnos de los que debería aguantar: si no termina sola, este
+    # test se come los 12 de MAX_TURNOS_LLAMADA y el `assert` de abajo lo dice.
+    dichas = ["la herida la veo normal"] * 12
+    servs = servicios(llm, dichas)
+
+    llamada, _ = orquestador.abrir_llamada(cfg, servs, almacen, dia_postop=5)
+
+    respuestas: list[str] = []
+    for _ in dichas:
+        payload = orquestador.procesar_turno(cfg, servs, llamada, b"audio")
+        respuestas.append(payload["respuesta"])
+        if payload["fin"]:
+            break
+
+    # 1. TERMINA.
+    assert not llamada.abierta
+    assert payload["fin"] is True
+
+    # 2. Con criterio propio, y sin inventar una clase clínica.
+    assert llamada.criterio == "FALLO_DE_INFRAESTRUCTURA"
+    assert llamada.criterio != "AGOTAMIENTO"  # eso significa «no entendí al paciente»
+    assert llamada.clase is None
+    assert plantillas.FALLO_DE_INFRAESTRUCTURA in respuestas[-1]
+
+    # 3. No repite la misma pregunta más de N veces. Las N-1 primeras son la
+    #    repregunta; la N-ésima ya es el cierre.
+    assert llamada.turno_idx == cfg.max_turnos_sin_procesar
+    repreguntas = respuestas[:-1]
+    assert len(repreguntas) == cfg.max_turnos_sin_procesar - 1
+    assert len(set(repreguntas)) <= cfg.max_turnos_sin_procesar
+
+    # 4. Y la enmienda a HD7 sigue intacta: no se cobró ni una repregunta.
+    assert llamada.preguntas_totales == 1  # solo la apertura
+
+    # 5. El cierre lo declara, para que nadie tenga que deducirlo.
+    cierre = orquestador.cerrar_llamada(cfg, llamada, almacen, motivo="prueba")
+    assert cierre["criterio"] == "FALLO_DE_INFRAESTRUCTURA"
+    assert cierre["clase"] is None
+    assert cierre["degradacion"]["racha_maxima_sin_procesar"] == (
+        cfg.max_turnos_sin_procesar
+    )
+
+
+def test_una_racha_que_se_rompe_no_termina_la_llamada(tmp_path: Path) -> None:
+    """El contrapeso: lo que termina una llamada es la caída SOSTENIDA.
+
+    Un proveedor que parpadea dos veces, se recupera y vuelve a parpadear no
+    puede cerrar el seguimiento de un paciente que está contestando bien. Si el
+    contador no se reiniciara, cualquier llamada larga con mala red acabaría en
+    FALLO_DE_INFRAESTRUCTURA sin que el proveedor haya estado caído nunca.
+    """
+    cfg = config_de_prueba(tmp_path)
+    almacen = Almacen()
+    llm = LLMFalso(
+        respuestas_extractor=[extraccion("normal", herida="normal")],
+        redactor_timeout=True,
+    )
+    servs = servicios(llm, ["la herida la veo normal"] * 8)
+    llamada, _ = orquestador.abrir_llamada(cfg, servs, almacen, dia_postop=5)
+
+    # Dos fallos, un turno bueno, dos fallos: nunca N seguidos.
+    for caidos in (2, 2):
+        llm.extractor_error = True
+        for _ in range(caidos):
+            orquestador.procesar_turno(cfg, servs, llamada, b"audio")
+        llm.extractor_error = False
+        orquestador.procesar_turno(cfg, servs, llamada, b"audio")
+
+    assert llamada.abierta
+    assert llamada.criterio != "FALLO_DE_INFRAESTRUCTURA"
+    assert llamada.turnos_sin_procesar_seguidos == 0
+    assert llamada.degradacion()["racha_maxima_sin_procesar"] == 2
+
+
+def test_el_stt_caido_tambien_cuenta_para_la_terminacion(tmp_path: Path) -> None:
+    """Son los DOS proveedores del turno, igual que en la enmienda a HD7.
+
+    Un agente que no oye al paciente está tan incapacitado para evaluarlo como
+    uno que no puede consultar al modelo.
+    """
+    cfg = config_de_prueba(tmp_path)
+    almacen = Almacen()
+    llm = LLMFalso(respuestas_extractor=[extraccion("normal", herida="normal")])
+    servs = servicios(llm, ["lo que sea"] * 6, stt_resultado=ERROR)
+
+    llamada, _ = orquestador.abrir_llamada(cfg, servs, almacen, dia_postop=5)
+    for _ in range(6):
+        payload = orquestador.procesar_turno(cfg, servs, llamada, b"audio")
+        if payload["fin"]:
+            break
+
+    assert not llamada.abierta
+    assert llamada.criterio == "FALLO_DE_INFRAESTRUCTURA"
+    assert llamada.degradacion()["turnos_sin_stt"] == {
+        "error": cfg.max_turnos_sin_procesar
+    }
 
 
 def test_un_timeout_del_extractor_tampoco_gasta_presupuesto(tmp_path: Path) -> None:

@@ -322,10 +322,47 @@ def procesar_turno(
     ms_redaccion = 0.0
     fuente = redactor.FUENTE_PLANTILLA
 
+    # Fallo del agente, no del paciente: uno de los dos proveedores del turno no
+    # respondió. Es la misma condición que exime presupuesto (enmienda a HD7) y
+    # ahora, además, la que alimenta la condición de parada.
+    fallo_del_agente = (
+        stt.resultado in (ERROR, TIMEOUT)
+        or extraccion.resultado in (ERROR, TIMEOUT)
+    )
+    racha = llamada.anotar_procesamiento(fallo_del_agente)
+
     if decision is None:
         cuerpo = plantillas.FALLO_TECNICO
         llamada.abierta = False
         llamada.criterio = "ERROR_TECNICO"
+    elif (
+        decision.accion is politica.Accion.REPREGUNTAR
+        and racha >= cfg.max_turnos_sin_procesar
+    ):
+        # TERMINACIÓN (F3.9). La enmienda a HD7 eximió de presupuesto los turnos
+        # que el agente no pudo procesar, y con eso eliminó la ÚNICA condición de
+        # parada de una llamada: con el proveedor caído de forma permanente,
+        # ningún turno cobra, `AGOTAMIENTO` no llega nunca y el agente repite la
+        # misma pregunta hasta el tope de turnos. Medido: 9 turnos, «1 de 6
+        # preguntas», 0 tokens.
+        #
+        # Eximir un fallo OCASIONAL era correcto y se conserva. Lo que no puede
+        # ser es que eximirlos TODOS deje la llamada sin final.
+        #
+        # No clasifica, y es deliberado: no hubo señales que decidir, así que
+        # `clase` se queda en None. El criterio es propio —no `AGOTAMIENTO`, que
+        # significa «le pregunté y no logré confirmar»— y escala a una persona
+        # igual, porque un paciente al que no se pudo evaluar no es un paciente
+        # sano.
+        _log.error(
+            "llamada %s: %d turnos seguidos sin procesar (tope %d); "
+            "cierre por FALLO_DE_INFRAESTRUCTURA",
+            llamada.id, racha, cfg.max_turnos_sin_procesar,
+        )
+        cuerpo = plantillas.FALLO_DE_INFRAESTRUCTURA
+        llamada.abierta = False
+        llamada.criterio = "FALLO_DE_INFRAESTRUCTURA"
+        llamada.senal_pendiente = None
     elif decision.accion is politica.Accion.REPREGUNTAR and decision.senal_a_indagar:
         senal = decision.senal_a_indagar
         base = plantillas.repregunta(senal, llamada.gastadas(senal))
@@ -351,10 +388,11 @@ def procesar_turno(
         #   `ok` significa que el agente oyó bien y no había nada que oír. Ahí el
         #   paciente sí fue interrogado y sí calló, que es exactamente el caso
         #   que HD7 existía para acotar.
-        fallo_del_agente = (
-            stt.resultado in (ERROR, TIMEOUT)
-            or extraccion.resultado in (ERROR, TIMEOUT)
-        )
+        #
+        # `fallo_del_agente` se calcula arriba, antes de la decisión, porque
+        # desde F3.9 alimenta también la condición de parada: eximir presupuesto
+        # y contar la racha son dos consecuencias del MISMO hecho, y tenerlo en
+        # un solo sitio impide que diverjan.
         if not fallo_del_agente:
             llamada.cobrar_pregunta(senal)
         llamada.senal_pendiente = senal

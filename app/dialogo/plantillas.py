@@ -32,6 +32,7 @@ __all__ = [
     "LIMITE_CLINICO",
     "SIN_TRANSCRIPCION",
     "FALLO_TECNICO",
+    "FALLO_DE_INFRAESTRUCTURA",
     "REPREGUNTAS",
     "REPREGUNTAS_INSISTENCIA",
     "CIERRES",
@@ -76,6 +77,31 @@ FALLO_TECNICO = (
 No clasifica. Inventar una clase para no dejar la llamada sin desenlace sería
 exactamente la falla que todo el diseño existe para impedir; decir que hubo un
 fallo y escalar a una persona es la única salida que no miente.
+"""
+
+FALLO_DE_INFRAESTRUCTURA = (
+    "Disculpe, estoy teniendo un problema técnico y no logro registrar sus "
+    "respuestas, así que no puedo completar el seguimiento por este medio. "
+    "Esto es un fallo mío, no algo que usted haya hecho, y no significa que "
+    "esté bien ni que esté mal. Dejo el caso marcado para que una persona del "
+    "equipo se comunique con usted hoy. Si mientras tanto tiene fiebre, dolor "
+    "fuerte o cambios en la herida, comuníquese de una vez con su cirujano."
+)
+"""Cierre cuando el agente lleva N turnos seguidos sin poder procesar nada.
+
+Tres cosas que este texto tiene que hacer a la vez, y por eso es largo:
+
+1. **No clasificar.** La clase clínica sale de `politica.decidir` y aquí no hubo
+   señales que decidir. Decir VERDE sería la falla catastrófica del dominio;
+   decir ROJO sería el llamador clasificando por su cuenta, que es lo que el
+   único `import politica` existe para impedir.
+2. **No dejar al paciente creyendo que se le evaluó.** «Un paciente al que no se
+   pudo evaluar no es un paciente sano»: por eso escala a una persona igual.
+3. **Dar la salida de seguridad.** Si el agente no puede oírlo, lo mínimo es
+   repetirle los tres motivos por los que debe llamar a su cirujano sin esperar.
+
+Es deliberadamente distinto de `AGOTAMIENTO`, que significa «le pregunté y no
+logré confirmar lo que me dijo». Aquí no se le llegó a preguntar de verdad.
 """
 
 REPREGUNTAS: dict[str, str] = {

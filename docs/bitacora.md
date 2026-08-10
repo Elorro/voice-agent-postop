@@ -1962,3 +1962,225 @@ cambia):**
   consume el cubo de `generateContent`, pero es tráfico que nadie pidió y es la
   causa de que el 2,6 % se note. Un caché corto del resultado (30-60 s) lo
   reduciría sin perder la propiedad de la sonda.
+
+---
+
+## F3.9 — El arreglo del perfil A rompió el perfil C, y la sonda no lo vio
+
+**Encargo:** tres cosas, con la causa ya confirmada por el arquitecto —
+`reasoning_effort` (F3.3, en `low` desde F3.4) hace que Ollama responda
+`HTTP 400 "llama3.2:3b" does not support thinking`—: que el parámetro solo se
+envíe si el modelo lo soporta; que la sonda deje de aprobar un LLM que no puede
+inferir; y que una llamada termine cuando el proveedor está caído de forma
+permanente.
+
+### 0. Lo reproducido antes de tocar nada
+
+- `[HECHO]` **La causa es correcta, y el valor que rompe es `low`, no el
+  parámetro.** Medido contra el Ollama del perfil C el **2026-08-10**, mismo
+  cuerpo salvo ese campo:
+
+  | `reasoning_effort` | Respuesta |
+  |---|---|
+  | **ausente** | `HTTP 200` |
+  | `none` | `HTTP 200` |
+  | `low` | **`HTTP 400`** `"llama3.2:3b" does not support thinking` |
+
+  Que `none` pase importa: explica por qué el defecto sobrevivió tanto. El
+  default de `LLM_RAZONAMIENTO` era `none` y **funcionaba por casualidad**; lo
+  que rompe es el valor que F3.4 puso para el perfil A.
+- `[HECHO]` **Y hay una causa de empaquetado por debajo, que es la que lo hacía
+  inevitable.** `LLM_RAZONAMIENTO` vivía FUERA de los bloques de perfil de
+  `.env.example`: el bloque C traía `LLM_RAZONAMIENTO=omitir` en la línea 47 y
+  la sección de más abajo repetía `LLM_RAZONAMIENTO=low` en la 82. **Con la
+  clave duplicada gana la última** —verificado con
+  `docker run --rm --env-file dup.env alpine sh -c 'echo $X'` → `low`—, así que
+  descomentar el perfil C entero **no bastaba**. Es exactamente el trapo que
+  F3.4 ya había recogido para `REDACTOR_TIMEOUT_MS`, y la lección no se aplicó a
+  esta variable.
+- `[HECHO]` **El fallo era invisible por partida doble.** `app/llm/cliente.py`
+  reportaba `detalle="Client error '400 Bad Request'"` y **tiraba el cuerpo de la
+  respuesta**, que es donde estaba la única frase que decía qué pasaba. La única
+  ruta de fallo sin mensaje del proveedor en el log.
+
+### 1. El parámetro solo se envía si se pide
+
+- `[HECHO]` **`LLM_RAZONAMIENTO` vacía = el campo no viaja.** Nueva función
+  `app/config.py::_razonamiento()` con tres estados: **ausente** → `none` (el
+  default histórico, que el perfil A necesita); **presente y vacía** → no se
+  manda; cualquier otro valor → se manda tal cual. `omitir` se conserva como
+  alias porque está publicado en `DECLARACION_MODELO.md` §5.
+  **Antes era imposible**: `_texto` colapsa la cadena vacía al default, así que
+  `LLM_RAZONAMIENTO=` daba `none` y no había forma de pedir «ninguno».
+- `[HECHO]` **`LLM_RAZONAMIENTO` se muda DENTRO de cada bloque de perfil** en
+  `.env.example` y desaparece de la sección suelta, que ahora explica por qué.
+  El bloque C lo lleva vacío y con el 400 literal escrito al lado.
+- `[HECHO]` **6 tests en `tests/test_llm_razonamiento.py`**, que fijan la regla
+  en las dos direcciones: con la variable vacía —o solo espacios, u `omitir`— la
+  clave **no aparece en el cuerpo**; con un valor explícito sí; y ausente ≠
+  vacía, que es el bug en una línea.
+- `[HECHO]` **El cliente ya no tira el mensaje del proveedor.**
+  `_mensaje_del_cuerpo` lee `error.message` en las dos formas que usan los
+  proveedores (objeto de OpenAI y ARRAY de Gemini) y lo pega al `detalle` y al
+  log: `… — el proveedor dice: "llama3.2:3b" does not support thinking`.
+
+### 2. La sonda comprobaba presencia, no capacidad — el defecto más grave
+
+- `[HECHO]` **Reproducido en vivo antes del arreglo:** `/salud` daba **LISTO**,
+  `docker compose ps` daba **healthy**, y el camino de producción
+  (`ClienteLLM.completar` con la config real del contenedor) devolvía
+  `resultado='error'` en el **100 %** de las inferencias. `GET /v1/models`
+  respondía 200 perfectamente. **Listar un modelo no es servirlo.**
+- `[HECHO]` **Es el mismo patrón que la voz de Piper que cargaba y no podía
+  hablar**, y por eso aquella sonda terminó fonemizando de verdad. Comprobar
+  presencia en vez de capacidad deja pasar exactamente esta clase de fallo.
+- `[HECHO]` **`app/salud.py::_probar_inferencia`**: una inferencia real de pocos
+  tokens (`max_tokens: 8`) **con los mismos parámetros que enviará el turno**, en
+  particular `reasoning_effort`. Sin eso no habría cazado nada, porque el
+  parámetro era justo lo que el proveedor rechazaba. Timeout propio
+  (`SALUD_INFERENCIA_TIMEOUT_MS`, 10 s por defecto, no los 6 de `/models`:
+  en el perfil C la primera inferencia carga el modelo en memoria).
+- `[HECHO]` **El fallo es distinguible.** `datos.diagnostico` suma `no_infiere` a
+  las categorías de F3.8, y el texto lo dice sin ambigüedad: *«el proveedor LISTA
+  «llama3.2:3b» pero RECHAZA la inferencia (HTTP 400): "llama3.2:3b" does not
+  support thinking. Listar un modelo no es servirlo; recargar no lo arregla. El
+  turno envía `reasoning_effort=low`; si el modelo no razona, deje
+  LLM_RAZONAMIENTO vacío en .env»*. Un `429` o un timeout de la inferencia siguen
+  saliendo como `transitorio` → recargue.
+- `[HECHO]` **Un `200` sin `choices` tampoco cuenta como inferencia.** Es el modo
+  de falla del turno 5 de F3.4 un nivel más abajo, y aceptarlo sería volver a
+  aprobar un LLM que no produce nada.
+- `[HECHO]` **El cuerpo de la sonda replica el del EXTRACTOR, no solo el
+  parámetro que rompió.** Además de `reasoning_effort` va `response_format:
+  {"type":"json_object"}`, que el extractor manda siempre. Un campo que la sonda
+  no replique es un campo que el proveedor puede rechazar en el turno **después**
+  de haber aprobado la comprobación — el mismo defecto un nivel más abajo.
+  Verificado que los dos proveedores lo aceptan: Ollama `200`, Gemini `200`.
+
+**Lo que cuesta, medido el 2026-08-10 sobre la versión entregada:**
+
+| Sondeo | Perfil C (`llama3.2:3b`, CPU) | Perfil A (`models/gemini-3.6-flash`) |
+|---|---|---|
+| Solo `GET /models` (comportamiento anterior) | **6 ms** | 725 ms |
+| Con inferencia real | **497-527 ms** | **875 ms** (total 1 682 ms) |
+| Detección del fallo | **76 ms** — el 400 vuelve rápido | — |
+
+La inferencia en modo JSON sale más barata que en texto libre —la respuesta es
+corta por construcción—: medida sin `response_format` daba 1 302-2 124 ms en el
+perfil C, y con él baja a ~500 ms. El campo que se añadió por corrección resultó
+además el más barato.
+
+- `[HECHO]` **El coste está acotado a UNA inferencia por proceso**, que es lo que
+  propuso el encargo. `SALUD_INFERENCIA=arranque` (por defecto) memoiza
+  `(base_url, modelo, razonamiento)` tras el primer éxito y no vuelve a pagar;
+  con el `healthcheck` cada 30 s eso es la diferencia entre **1 inferencia por
+  vida del contenedor** y ~120 por hora. **Un fallo SÍ se reintenta en cada
+  sondeo**, porque es el estado del que se quiere salir. `siempre` y `0` para
+  depurar y para la demo offline.
+- `[HECHO]` **No se memoiza con expiración, y es a propósito:** lo que la
+  inferencia comprueba —que esta combinación de parámetros es aceptada— no se
+  vuelve falso porque pase el tiempo. Que el proveedor CAIGA lo sigue viendo el
+  sondeo de `/models`, que corre en cada pasada.
+- `[HECHO]` **16 tests en `tests/test_salud_llm.py`.** Cierra además la deuda que
+  F3.8 dejó declarada (la sonda no tenía test).
+
+### 3. Terminación: eximir todos los turnos eliminó la condición de parada
+
+- `[HECHO]` **El defecto, confirmado.** La enmienda a HD7 (F3.7) dejó de cobrar
+  presupuesto cuando el turno no llegaba a procesarse. Con el proveedor caído de
+  forma **permanente** eso elimina la ÚNICA condición de parada: ningún turno
+  cobra, `AGOTAMIENTO` no llega nunca, y el agente repite la misma pregunta.
+  Registro del caso: **9 turnos, «1 de 6 preguntas», 0 tokens de entrada y de
+  salida**. Eximir un fallo ocasional era correcto; eximirlos todos no.
+- `[HECHO]` **Nueva parada:** tras **N = 3** turnos CONSECUTIVOS sin poder
+  procesar —`stt.resultado` o `extraccion.resultado` en `error`/`timeout`, la
+  misma condición que exime presupuesto— la llamada cierra con criterio
+  **`FALLO_DE_INFRAESTRUCTURA`**. `MAX_TURNOS_SIN_PROCESAR` lo configura.
+- `[HECHO]` **Por qué N = 3, y sale del registro de este repositorio:**
+
+  | Evento observado | Turnos seguidos |
+  |---|---|
+  | Caída de DNS, corrida de F3.4 turno 1 | **1** |
+  | Parpadeos de la sonda, F3.8 | **1** |
+  | Timeout del extractor, llamada `4f45dab7f3a2` (hoy) | **1** |
+  | Cuota diaria agotada, llamada `c50e671845a8` | **4** (permanente) |
+
+  Lo transitorio que este proyecto ha medido dura **1 turno**; lo permanente duró
+  **4**. N = 3 separa las dos poblaciones observadas sin tocar ninguna. En
+  tiempo de pared son ~30-45 s de caída sostenida (los turnos de
+  `c50e671845a8` van a 11-16 s uno de otro). Y acota lo que aguanta el paciente:
+  oír la misma pregunta 3 veces es molesto; 9 —lo medido— es inaceptable.
+- `[HECHO]` **NO clasifica, y es la decisión importante.** `clase` se queda en
+  `None`. Poner VERDE sería la falla catastrófica del dominio; poner ROJO sería
+  **el llamador clasificando por su cuenta**, que es justo lo que el único
+  `import politica` existe para impedir. `politica/` no se toca: esto es
+  contabilidad del llamador, igual que HD7.
+- `[HECHO]` **Escala a humano igual**, porque un paciente al que no se pudo
+  evaluar no es un paciente sano. La plantilla
+  `plantillas.FALLO_DE_INFRAESTRUCTURA` dice tres cosas a la vez: que el fallo es
+  del agente y no del paciente, que **no** significa que esté bien ni mal, y los
+  tres motivos por los que debe llamar a su cirujano sin esperar.
+- `[HECHO]` **El criterio es propio, no `AGOTAMIENTO`.** `AGOTAMIENTO` significa
+  «le pregunté y no logré confirmar lo que me dijo»; aquí no se le llegó a
+  preguntar de verdad. Confundirlos es lo que F3.6 ya había identificado como
+  «la alerta dice “no se pudo confirmar nada” cuando lo cierto era otra cosa».
+- `[HECHO]` **`degradacion` declara `racha_maxima_sin_procesar`**, la racha
+  máxima y no el total: es lo que distingue «el proveedor parpadeó tres veces
+  sueltas» de «el proveedor estuvo caído».
+- `[HECHO]` **`motivo` del cierre deja de mentir.** `app/api.py` ponía
+  `motivo: "clasificada"` en toda llamada cerrada, incluidas las que cierran sin
+  clase. Ahora hay `fallo_de_infraestructura` y `error_tecnico`, para que una
+  caída de proveedor no se cuente en el registro como una evaluación clínica.
+- `[HECHO]` **La enmienda a HD7 sigue intacta**, y hay tests que lo fijan: el
+  silencio del paciente SÍ cobra, `json_invalido` SÍ cobra, una racha que se
+  rompe reinicia el contador y NO cierra la llamada, y el STT caído cuenta igual
+  que el LLM caído.
+- `[CORRECCIÓN a F3.7]` El test
+  `test_el_proveedor_caido_no_gasta_presupuesto_ni_cierra_por_agotamiento` exigía
+  `llamada.abierta` con el proveedor caído seis turnos. **Esa aserción fijaba el
+  defecto**: se sustituye por el cierre en `FALLO_DE_INFRAESTRUCTURA`,
+  conservando las dos que sí eran la propiedad buscada (no se cobró presupuesto,
+  no cerró por `AGOTAMIENTO`).
+
+### Lo verificado, y con qué
+
+| Criterio | Resultado |
+|---|---|
+| `python3 -m pytest tests/ -q` | **366 pasan, 1 skip** (341 antes; **25 tests nuevos**) |
+| `sh scripts/sin_rutas_absolutas.sh` | **0**, sin avisos |
+| El 400 de Ollama, antes del arreglo | `ClienteLLM.completar` real dentro del contenedor → `resultado='error'`, 100 % de las inferencias, con `/salud` en **LISTO** |
+| La sonda lo caza ahora | `estado=fallo`, `diagnostico=no_infiere`, detalle con la frase literal del proveedor, en **104 ms** |
+| La sonda aprueba la configuración buena | `estado=ok`, `inferencia de prueba OK en 1 302 ms` (perfil C) y `1 731 ms` (perfil A) |
+| **Llamada real, perfil C** (`494c890604bc`) | **5 turnos, cierre ROJO por S1** (`fiebre_franca`, 38,0 °C en día 7). Extractor `ok` en 4 de 5, redactor emitiendo (`fuente_respuesta: llm` en **3** turnos), 4 062 / 174 tokens reales. **El perfil C vuelve a funcionar de punta a punta** |
+| **Terminación real, proveedor apagado** (`807c6426108e`) | `docker stop voice-agent-postop-llm` + llamada completa → **3 turnos y cierre `FALLO_DE_INFRAESTRUCTURA`**, `clase: null`, `preguntas_totales: 1` (solo la apertura), 0 tokens. No es un doble: el proveedor estaba apagado de verdad |
+| `/salud` con el proveedor apagado | **NO LISTO**, `diagnostico=servidor_local_caido`, con el comando para levantarlo |
+
+### Deuda que este cambio deja abierta
+
+- `[HECHO]` **La calidad de las citas del perfil C es mala, y se ve en la llamada
+  de verificación.** `herida → "alrededor"`, `movilidad → "sentí escalofrío"`
+  (una frase que no habla de movilidad), `fiebre_c → "y medio"`. La validación
+  por cita las acepta porque el texto está en la transcripción — el mismo límite
+  que documentó `docs/prueba_inyeccion.md` §3.1. La clase salió bien por
+  `fiebre_franca`, pero **`movilidad` se llenó con una cita que no la respalda**.
+  Es calidad de `llama3.2:3b`, no un defecto de código, y es el precio declarado
+  del fallback; queda escrito porque nadie lo había mirado turno por turno.
+- `[HECHO]` **El turno 1 del perfil C sigue cayendo en timeout** incluso con
+  `EXTRACTOR_TIMEOUT_MS=20000`: 3,9-5,8 s de extracción en régimen normal, pero
+  el primero paga la carga del modelo. `racha_maxima_sin_procesar: 1`, así que la
+  parada nueva no se dispara — correcto, pero el primer turno de toda llamada del
+  perfil C se pierde.
+- `[ESPECULACIÓN]` **N = 3 es un número de esta máquina y de este registro.** Un
+  proveedor con caídas de 2-3 turnos que se recupera solo cerraría llamadas que
+  habrían terminado bien. No hay muestra para afirmar que no exista ese régimen;
+  si aparece, el número sube y por eso es configurable.
+- `[ESPECULACIÓN]` **La inferencia de comprobación gasta cuota en el perfil A.**
+  Una petición por arranque del contenedor, sobre 20 diarias por modelo. Con
+  `SALUD_INFERENCIA=arranque` es despreciable; con `siempre` se come el cubo en
+  20 sondeos. Está documentado, pero nada lo impide.
+- `[CERRADO en el mismo cambio]` ~~No se revisó si hay OTROS parámetros del
+  cuerpo que un proveedor pueda rechazar.~~ `response_format` se detectó al
+  redactar esta entrada y se añadió a la sonda: era el otro campo opcional que el
+  extractor manda siempre. **Lo que queda abierto es más estrecho:** la sonda
+  replica los campos, no el prompt. Un proveedor que acepte el cuerpo y falle
+  ante 800 tokens de sistema seguiría pasando la comprobación.

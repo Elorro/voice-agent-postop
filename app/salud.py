@@ -418,6 +418,167 @@ def _diagnostico_de_sondeo(
     )
 
 
+_inferencia_verificada: set[tuple[str, str, str]] = set()
+"""`(base_url, modelo, razonamiento)` que ya superaron una inferencia real.
+
+Memoria de proceso, no caché con expiración: lo que la inferencia comprueba es
+que **esta combinación de parámetros es aceptada por el proveedor**, y eso no se
+vuelve falso solo porque pase el tiempo. Si cambia cualquiera de los tres, la
+clave cambia y se vuelve a verificar. Lo que sí puede volverse falso —el
+proveedor cae— lo sigue viendo el sondeo de `/models` en cada pasada.
+"""
+
+
+def _mensaje_de_error_del_proveedor(respuesta: Any) -> str:
+    """El texto que el proveedor pone en el cuerpo del error, si lo hay.
+
+    Sin esto, un `400` se reporta con la frase genérica de httpx —«Client error
+    '400 Bad Request'»— y se pierde justo lo único que dice qué pasó. El caso
+    real: Ollama contesta `"llama3.2:3b" does not support thinking`, que nombra
+    la causa exacta, y esa frase no aparecía en ningún log (F3.9).
+
+    Se aceptan las dos formas: el objeto `{"error": {...}}` de OpenAI y el ARRAY
+    `[{"error": {...}}]` que devuelve Gemini.
+    """
+    try:
+        cuerpo = respuesta.json()
+    except Exception:  # noqa: BLE001 - el cuerpo de un error no es contrato
+        texto = (getattr(respuesta, "text", "") or "").strip()
+        return texto[:200]
+    if isinstance(cuerpo, list):
+        cuerpo = next((e for e in cuerpo if isinstance(e, dict) and "error" in e), {})
+    if not isinstance(cuerpo, dict):
+        return ""
+    error = cuerpo.get("error")
+    if isinstance(error, dict):
+        return str(error.get("message", ""))[:200]
+    return str(error or "")[:200]
+
+
+def _probar_inferencia(cfg: Config, datos: dict[str, Any]) -> tuple[str, str] | None:
+    """Una inferencia mínima real. `None` si pasa (o si toca saltarla).
+
+    **Por qué existe, y es el defecto más grave que ha tenido este repositorio.**
+    Hasta F3.9 la sonda comprobaba que el proveedor **lista** el modelo. El
+    2026-08-10 eso dio LISTO, el contenedor `healthy`, y el LLM rechazaba el
+    **100 %** de las inferencias con `HTTP 400 "llama3.2:3b" does not support
+    thinking`: `GET /models` respondía 200 perfectamente porque listar no es
+    servir. Es el mismo patrón que la voz de Piper que cargaba y no podía hablar
+    —comprobar **presencia** en vez de **capacidad**— y por eso aquella sonda
+    también terminó fonemizando de verdad.
+
+    La petición lleva **los mismos parámetros que enviará el turno**, en
+    particular `reasoning_effort`. Sin eso no habría cazado nada: el parámetro
+    era justamente lo que el proveedor rechazaba.
+
+    Coste acotado por `SALUD_INFERENCIA`:
+
+    * `arranque` (por defecto) — se repite hasta que sale bien **una vez** por
+      proceso; después no se vuelve a pagar. Un fallo sí se reintenta en cada
+      sondeo, que es cuando hace falta: es el estado del que se quiere salir.
+    * `siempre` — cada sondeo. Para depurar.
+    * `0` / `no` — nunca.
+    """
+    modo = cfg.salud_inferencia
+    if modo in ("0", "no", "nunca", "false"):
+        datos["inferencia"] = "desactivada (SALUD_INFERENCIA=0)"
+        return None
+
+    clave = (cfg.llm_base_url, cfg.llm_modelo, cfg.llm_razonamiento)
+    if modo != "siempre" and clave in _inferencia_verificada:
+        datos["inferencia"] = "verificada al arrancar (no se repite)"
+        return None
+
+    import httpx
+
+    # El cuerpo replica el del EXTRACTOR, que es el camino crítico: mismos
+    # parámetros opcionales, solo que con un prompt de un token. Cada campo que
+    # la sonda no replique es un campo que el proveedor puede rechazar en el
+    # turno después de haber aprobado la comprobación — que es literalmente el
+    # defecto que esta función existe para cerrar, un nivel más abajo.
+    cuerpo: dict[str, Any] = {
+        "model": cfg.llm_modelo,
+        "messages": [{"role": "user", "content": "OK"}],
+        "max_tokens": 8,
+        "temperature": 0.0,
+        "stream": False,
+        "response_format": {"type": "json_object"},
+    }
+    if cfg.llm_razonamiento:
+        cuerpo["reasoning_effort"] = cfg.llm_razonamiento
+    cabeceras = {"Content-Type": "application/json"}
+    if cfg.llm_api_key:
+        cabeceras["Authorization"] = f"Bearer {cfg.llm_api_key}"
+
+    inicio = time.monotonic()
+    try:
+        respuesta = httpx.post(
+            f"{cfg.llm_base_url.rstrip('/')}/chat/completions",
+            json=cuerpo,
+            headers=cabeceras,
+            timeout=cfg.salud_inferencia_timeout_ms / 1000.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        ms = int((time.monotonic() - inicio) * 1000)
+        datos["inferencia_ms"] = ms
+        transitorio = _diagnostico_de_sondeo(
+            exc, None, cfg.llm_modelo, cfg.salud_inferencia_timeout_ms / 1000.0
+        )
+        if transitorio is not None:
+            return transitorio
+        return ("inalcanzable", f"la inferencia de prueba no llegó: {exc}")
+
+    ms = int((time.monotonic() - inicio) * 1000)
+    datos["inferencia_ms"] = ms
+
+    if respuesta.status_code == 200:
+        try:
+            elecciones = (respuesta.json() or {}).get("choices")
+        except Exception:  # noqa: BLE001
+            elecciones = None
+        if not elecciones:
+            # El 200 sin `choices` es el modo de falla del turno 5 de F3.4, un
+            # nivel más abajo. No se acepta como prueba de que el modelo sirve.
+            return (
+                "no_infiere",
+                f"el proveedor acepta «{cfg.llm_modelo}» pero su respuesta no "
+                "trae `choices`: no hay inferencia utilizable. Recargar no lo "
+                "arregla; pruebe otro modelo o baje LLM_RAZONAMIENTO",
+            )
+        _inferencia_verificada.add(clave)
+        datos["inferencia"] = f"OK en {ms} ms"
+        return None
+
+    codigo = respuesta.status_code
+    if codigo in (401, 403):
+        return ("clave", f"la inferencia de prueba fue rechazada (HTTP {codigo}): "
+                         "revise LLM_API_KEY en .env")
+
+    mensaje = _mensaje_de_error_del_proveedor(respuesta) or f"HTTP {codigo}"
+    if codigo in _HTTP_TRANSITORIOS:
+        return (
+            "transitorio",
+            f"no se pudo verificar ahora: la inferencia de prueba devolvió "
+            f"HTTP {codigo} ({mensaje}). Esto NO dice que «{cfg.llm_modelo}» no "
+            "sirva: recargue /salud una vez antes de dar nada por roto",
+        )
+
+    # El caso que motivó toda esta sonda: el modelo ESTÁ servido y aun así
+    # rechaza la petición que el turno le va a mandar.
+    sugerencia = ""
+    if cfg.llm_razonamiento:
+        sugerencia = (
+            f" El turno envía `reasoning_effort={cfg.llm_razonamiento}`; si el "
+            "modelo no razona, deje LLM_RAZONAMIENTO vacío en .env"
+        )
+    return (
+        "no_infiere",
+        f"el proveedor LISTA «{cfg.llm_modelo}» pero RECHAZA la inferencia "
+        f"(HTTP {codigo}): {mensaje}. Listar un modelo no es servirlo; recargar "
+        f"no lo arregla.{sugerencia}",
+    )
+
+
 def _parecidos(modelo: str, disponibles: list[str], tope: int = 5) -> list[str]:
     """Modelos servidos que comparten algún fragmento con el pedido.
 
@@ -530,13 +691,22 @@ def sondear_llm(cfg: Config) -> Componente:
         return Componente("llm", nombre, "fallo", detalle + sufijo, datos=datos)
 
     if cfg.llm_modelo in modelos:
+        # Listar no es servir: antes de decir OK, una inferencia real con los
+        # mismos parámetros que usará el turno.
+        fallo = _probar_inferencia(cfg, datos)
+        if fallo is not None:
+            datos["diagnostico"], detalle = fallo
+            return Componente("llm", nombre, "fallo", detalle + sufijo, datos=datos)
         datos["diagnostico"] = "ok"
+        inferencia = datos.get("inferencia", "")
         return Componente(
             "llm",
             nombre,
             "ok",
             f"«{cfg.llm_modelo}» servido y alcanzable "
-            f"({datos.get('latencia_ms')} ms)" + sufijo,
+            f"({datos.get('latencia_ms')} ms)"
+            + (f" · inferencia de prueba {inferencia}" if inferencia else "")
+            + sufijo,
             datos=datos,
         )
 

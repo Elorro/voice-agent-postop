@@ -157,14 +157,36 @@ LLM_API_KEY=
 EXTRACTOR_TIMEOUT_MS=20000
 REDACTOR_TIMEOUT_MS=8000
 RAG_TIMEOUT_MS=30000
+LLM_RAZONAMIENTO=
 ```
 
-**Los dos timeouts van en el mismo cambio.** Con los 2500 / 4000 ms del perfil A
-contra un modelo local, el extractor cae en timeout en *todos* los turnos —
-comprobado— y el agente escala por agotamiento sin haber entendido nada. Por eso
-`EXTRACTOR_TIMEOUT_MS` y `RAG_TIMEOUT_MS` viven **dentro de cada bloque de perfil**
-en `.env.example`, y no en una sección de timeouts al final del archivo: quien
-cambie de perfil los tiene delante.
+**Las cuatro líneas van en el mismo cambio, y la última costó el perfil entero.**
+
+Con los 2500 / 4000 ms del perfil A contra un modelo local, el extractor cae en
+timeout en *todos* los turnos —comprobado— y el agente escala por agotamiento sin
+haber entendido nada.
+
+`LLM_RAZONAMIENTO` **vacía** suprime el campo `reasoning_effort`. Medido contra
+Ollama el **2026-08-10**, mismo cuerpo salvo ese campo:
+
+| `reasoning_effort` | Respuesta de Ollama |
+|---|---|
+| ausente | `HTTP 200` |
+| `none` | `HTTP 200` |
+| `low` | **`HTTP 400`** `"llama3.2:3b" does not support thinking` |
+
+`low` es justo lo que necesita el perfil A (§5, alternativa 1), así que **el
+arreglo del perfil A rompía el perfil C**. Por eso las cuatro variables viven
+**dentro de cada bloque de perfil** en `.env.example` y no en una sección al
+final: quien cambia de perfil las tiene delante. Y por eso no pueden estar
+repetidas fuera del bloque — con la clave duplicada en un `env_file` **gana la
+última asignación**, verificado con `docker run --env-file`, que es exactamente
+como se coló este fallo.
+
+**Desde F3.9 este error ya no llega al primer turno:** `sondear_llm` hace una
+inferencia real de comprobación con los mismos parámetros que usará el turno, y
+`/salud` sale **NO LISTO** citando el mensaje del proveedor. Antes daba LISTO con
+el LLM inservible, porque `GET /models` respondía 200 perfectamente.
 
 `llama3.2:1b` si la máquina va justa de RAM. Contra un `llama.cpp` u `ollama`
 que el evaluador ya tenga corriendo en su host, basta con
@@ -221,6 +243,9 @@ Para que nadie tenga que fiarse de este documento:
 | `llama3.2:1b` y `llama3.2:3b` existen | <https://ollama.com/library/llama3.2/tags>, 2026-08-09 |
 | La sonda `sondear_llm` reconoce el modelo servido y detecta el apagado | Corrida contra el proveedor real, 2026-08-09. Con `meta-llama/llama-3.1-70b-instruct` → `[OK] servido y alcanzable (202 ms)`. Con `llama-3.3-70b-versatile` → `[FALLO] el proveedor no sirve «llama-3.3-70b-versatile» (responde con 400 modelos)` |
 | El **fallback local funciona end-to-end** | `docker compose --profile local up -d` + `ollama pull llama3.2:1b`, 2026-08-09. Sonda: `[OK] «llama3.2:1b» servido y alcanzable (33 ms) · perfil «local»`. Inferencia real por `POST /v1/chat/completions` desde el contenedor del agente: respuesta `'OK.'` |
+| **El perfil C sostiene una LLAMADA COMPLETA** | `llama3.2:3b`, **2026-08-10**, llamada `494c890604bc` con audio real y STT real: **5 turnos, cierre ROJO por S1** (`fiebre_franca`, 38,0 °C en día 7), extractor `ok` en 4 de 5 y redactor emitiendo en 3. 4 062 / 174 tokens. Lo de 2026-08-09 era una inferencia suelta; esto es el turno entero |
+| **`reasoning_effort` rompe el perfil C** | `POST /v1/chat/completions` contra Ollama, **2026-08-10**: ausente `200`, `none` `200`, `low` **`400 "llama3.2:3b" does not support thinking"`**. Ver §4 |
+| **La sonda caza ese fallo** | `sondear_llm` con `LLM_RAZONAMIENTO=low` sobre el perfil C, 2026-08-10 → `[FALLO] el proveedor LISTA «llama3.2:3b» pero RECHAZA la inferencia (HTTP 400): "llama3.2:3b" does not support thinking`, en **76 ms**. Antes de F3.9 el mismo estado daba **LISTO** |
 | **El identificador del perfil A: `models/gemini-3.6-flash`** | `POST /v1beta/openai/chat/completions` con la clave real, **2026-08-10** → `HTTP 200`, y el campo `model` de la respuesta devuelve `models/gemini-3.6-flash`, es decir el identificador **fijo**, no un alias. Contrato del extractor comprobado en la misma corrida: `fiebre_c=37.2` y `dolor_nrs=3` con sus citas |
 | **El nivel gratuito concede 20 peticiones por día y por modelo** | `HTTP 429` con `quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier` y `limit: 20` sobre `gemini-3.5-flash`, **2026-08-10**. Una llamada de 6 turnos gasta 11 peticiones |
 | **Latencia del perfil A** | Corrida de 6 turnos con STT real, **2026-08-10**: P50 3 777 ms / P95 4 043 ms de servidor sobre los **4 turnos limpios** de 6. Extractor 1 102–1 643 ms. Detalle y contaminación en README §9.2 |
@@ -266,8 +291,14 @@ mismo camino de código, pero **no se ejecutó**.
    |---|---|---|---|
    | 1 | `models/gemini-3.6-flash` | `200`, identificador fijo. **El activo** | `low` (rechaza `none` con 400) |
    | 2 | `models/gemini-3.5-flash` | `200`, identificador fijo | `none` |
-   | 3 | `models/gemini-3.5-flash-lite` | `200`, identificador fijo. No razona | `omitir` (rechaza el parámetro) |
+   | 3 | `models/gemini-3.5-flash-lite` | `200`, identificador fijo. No razona | **vacío** (rechaza el parámetro) |
    | 4 | `models/gemini-3-flash-preview` | `200`, pero **«preview»**: Google puede cambiarlo o apagarlo sin aviso | `none` |
+   | — | `llama3.2:3b` / `:1b` (perfil C) | Local | **vacío** (`400 does not support thinking`) |
+
+   **«Vacío» significa la variable escrita y en blanco** (`LLM_RAZONAMIENTO=`),
+   que desde F3.9 suprime el campo. `omitir` sigue funcionando como alias, pero
+   ya no hace falta. Ojo: la variable **ausente** no es lo mismo que vacía —
+   ausente conserva el default `none`.
 
    **No usar, y queda escrito para que nadie lo reintente:**
    `models/gemini-2.0-flash`, `models/gemini-2.0-flash-lite` y
