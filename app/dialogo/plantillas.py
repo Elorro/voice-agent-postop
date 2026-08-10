@@ -134,7 +134,7 @@ REPREGUNTAS_INSISTENCIA: dict[str, str] = {
     "herida": "Sobre la herida, en una palabra: ¿normal, enrojecida, o con pus?",
     "movilidad": "Sobre moverse, en una palabra: ¿normal, le cuesta, o no puede?",
     "fiebre_c": "Sobre la temperatura: ¿qué número le marcó el termómetro?",
-    "dolor_nrs": "Sobre el dolor: deme solo un número de cero a diez.",
+    "dolor_nrs": "Sobre el dolor, ¿qué número me dice?",
     "apetito": "Sobre la comida: ¿come normal, come menos, o casi no come?",
     "sueno": "Sobre el sueño: ¿duerme normal, duerme mal, o no duerme?",
 }
@@ -142,6 +142,27 @@ REPREGUNTAS_INSISTENCIA: dict[str, str] = {
 
 Repetir la misma frase a alguien que ya no la entendió es cómo se gastan los dos
 intentos de `TOPE_POR_SENAL` sin obtener nada.
+
+**Por qué la de `dolor_nrs` NO nombra «cero» ni «diez», y la primera sí.**
+Llamada `41d8feedea93` (2026-08-10, paciente no técnica). La primera pregunta
+—que sí define la escala— obtuvo «Al 5 nada más», una respuesta perfectamente
+usable. Se perdió por `HTTP 429`, y entonces el agente insistió dos veces con
+«deme solo un número **de cero a diez**». La paciente contestó «Cero.» y después
+«dices 0», y en el registro clínico quedó **0** donde el dolor real era **5**.
+
+Una frase que contiene los dos extremos de la escala le da al paciente confundido
+dos números que repetir, y el extractor no puede distinguir un eco de una
+respuesta: medido el 2026-08-10, «dices 0» se extrae como `0` **en los dos
+modelos probados**, con cita literal y valor en dominio. La defensa no cabe en el
+validador; cabe aquí, no poniéndole números en la boca.
+
+La escala sigue definiéndose en `REPREGUNTAS["dolor_nrs"]`, que es donde el
+paciente la oye por primera vez y donde la NRS necesita sus anclas. La
+insistencia solo pide el número que ya se le explicó.
+
+**Alcance de la evidencia: una paciente, una llamada.** El cambio es barato y la
+dirección del error que evita es la grave —un número falso en el registro
+clínico—, pero nadie ha medido que un paciente entienda mejor la frase nueva.
 """
 
 CIERRES: dict[str, str] = {

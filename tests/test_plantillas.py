@@ -76,6 +76,29 @@ def test_las_repreguntas_enuncian_el_dominio_cerrado() -> None:
     assert "grados" in plantillas.REPREGUNTAS["fiebre_c"]
 
 
+def test_la_insistencia_del_dolor_no_le_pone_numeros_en_la_boca() -> None:
+    """Llamada 41d8feedea93 (2026-08-10): la insistencia decía «deme solo un
+    número **de cero a diez**», la paciente contestó «Cero.» y luego «dices 0», y
+    en el registro clínico quedó 0 donde el dolor real era 5.
+
+    Nombrar los dos extremos de la escala le da a un paciente confundido dos
+    números que repetir, y el extractor no puede distinguir un eco de una
+    respuesta: «dices 0» se extrae como 0 en los dos modelos medidos. La primera
+    pregunta SÍ define la escala —la NRS necesita sus anclas y es donde el
+    paciente la oye por primera vez—; la insistencia solo pide el número.
+    """
+    insistencia = plantillas.REPREGUNTAS_INSISTENCIA["dolor_nrs"].lower()
+    for prohibida in ("cero", "diez", "0", "10"):
+        assert prohibida not in insistencia, (
+            f"la insistencia del dolor volvió a nombrar {prohibida!r}: "
+            f"{insistencia!r}"
+        )
+    assert "número" in insistencia
+    # Y la escala no se pierde: sigue enunciada donde toca.
+    primera = plantillas.REPREGUNTAS["dolor_nrs"].lower()
+    assert "cero" in primera and "diez" in primera
+
+
 def test_la_declaracion_de_limite_no_promete_una_respuesta() -> None:
     texto = plantillas.LIMITE_CLINICO.lower()
     assert "no puedo" in texto

@@ -2184,3 +2184,188 @@ además el más barato.
   extractor manda siempre. **Lo que queda abierto es más estrecho:** la sonda
   replica los campos, no el prompt. Un proveedor que acepte el cuerpo y falle
   ante 800 tokens de sistema seguiría pasando la comprobación.
+
+---
+
+## F3.10 — Un pull fallido que pasó por bueno, y un 5 que quedó registrado como 0
+
+Dos hallazgos del **2026-08-10**, independientes entre sí. El primero es de
+documentación y compromete G2; el segundo cambia lo que el agente le dice al
+paciente.
+
+### 1. Hallazgo de G2 — la corrida de cronometraje NO probó el camino crítico
+
+**Qué pasó.** En la corrida con usuario limpio, `sudo docker compose pull` falló
+con `lookup ghcr.io: no such host` y el operador **continuó con `up -d`**, que
+arrancó en 10 s. La corrida se anotó como buena.
+
+- `[HECHO]` **Ese arranque no prueba nada, y por una razón concreta:** `up -d` no
+  reintenta la descarga, usa lo que haya en el caché local del daemon. La corrida
+  se hizo en la **máquina de desarrollo**, donde la imagen ya estaba descargada
+  de las pruebas de F3.2 y F3.9. En la máquina del jurado no hay caché: el mismo
+  fallo o impide arrancar, o arranca algo que no es lo que se quiso instalar.
+  **El 10 s medido es el tiempo de un arranque desde caché, no el de una
+  instalación.**
+- `[HECHO]` **El procedimiento del README invitaba a seguir.** Los tres bloques
+  de §2 listan `pull` y `up -d` como dos líneas seguidas, sin nada que diga qué
+  hacer si la primera falla. Un operador que ve un error y un comando siguiente
+  ejecuta el comando siguiente; eso no es un error del operador.
+- `[HECHO]` **Corregido en el README, en dos sitios:** los tres bloques llevan
+  ahora `# SI FALLA, NO SIGA` en la línea del `pull`, y hay un recuadro ⛔ antes
+  de la ruta de construcción que explica **por qué** el `up -d` engaña —con este
+  caso, con su fecha y con el «arrancó en 10 s porque era la máquina de
+  desarrollo»—. La ruta alternativa deja de estar condicionada a «ghcr.io
+  bloqueado» y cubre también el DNS.
+- `[HECHO]` **Fila nueva en la tabla de diagnóstico de §10** para
+  `lookup ghcr.io: no such host`, `failed to resolve reference` y
+  `dial tcp: i/o timeout`: **es DNS**, se reintenta, y la alternativa es
+  `sudo docker compose build`.
+- `[PENDIENTE]` **La segunda corrida se hará con `docker image rm` previo**, para
+  que el caché local no pueda volver a tapar el camino crítico. Hasta entonces
+  las celdas de **README §9.1 siguen en PENDIENTE DE MEDICIÓN**, que es lo
+  correcto: el número que había no medía lo que dice medir.
+
+> **Nota de entorno, no del proyecto.** La resolución DNS de esta máquina falla
+> de forma **intermitente**. Registrado hoy contra `ghcr.io`, y antes contra
+> `registry.ollama.ai` y contra el STT de Groq (F3.4, turno 1: `[Errno -3]
+> Temporary failure in name resolution`). También es lo compatible con los 12
+> sondeos de `/salud` sin respuesta de F3.8. **No se atribuya a este repositorio
+> ni al README en una corrida futura**: es la red de esta máquina.
+
+### 2. El defecto de la llamada real — y no era el extractor
+
+**Llamada `41d8feedea93`**, 2026-08-10, usuario **no técnico**, llamada completa,
+cierre **VERDE por S2**. `models/gemini-3.6-flash`.
+
+| turno | dijo la paciente | respondió el agente | quedó |
+|---|---|---|---|
+| 3 | *(pregunta de dolor)* | «De cero a diez, ¿cuánto dolor tiene…?» | — |
+| 4 | **«Al 5 nada más.»** | «Sobre el dolor: deme solo un número **de cero a diez**.» | nada |
+| 5 | **«Cero.»** | la **misma** frase otra vez | nada |
+| 6 | **«dices 0»** | pasa a apetito | **`dolor_nrs = 0`** |
+
+El dolor real era **5** y en el registro clínico quedó **0**. La clase no cambió,
+pero el número que llega al equipo es falso.
+
+#### El diagnóstico contradice la hipótesis, y hay que decirlo primero
+
+La pregunta era si el extractor emitió el valor y la cita lo rechazó, o si no lo
+emitió. **Ninguna de las dos.** En los turnos 4 y 5:
+
+```
+extraccion.resultado = "error"     tokens_in = null   tokens_out = null   ms = 293 / 308
+```
+
+`tokens_in`/`tokens_out` en `null` significa que **el modelo nunca vio esas
+frases**. `app.log` lo confirma:
+
+```
+HTTP 429 — el proveedor dice: You exceeded your current quota, please check
+your plan and billing details.
+```
+
+- `[CORRECCIÓN]` **No es «el patrón de los números desnudos con un modo de fallo
+  peor». Es exactamente el mismo fallo de F3.6: `HTTP 429`.** La cuota diaria de
+  `models/gemini-3.6-flash` se agotó a mitad de la llamada, igual que en
+  `c50e671845a8`.
+- `[HECHO]` **Que la causa se pueda leer en el log es mérito de F3.9.** Hasta
+  ayer esa línea decía solo `Client error '429'`; el mensaje del proveedor se
+  perdía. `_mensaje_del_cuerpo` es lo que hizo este diagnóstico posible en un
+  minuto.
+- `[HECHO]` **La racha nunca llegó a 3**, así que la parada de F3.9 no se
+  disparó: fallaron los turnos 4 y 5, y el 6 se procesó. Correcto por diseño —
+  dos turnos seguidos son un tropiezo, no una caída— pero **el efecto colateral
+  es el que hizo daño**: la paciente oyó la misma insistencia tres veces, porque
+  un turno que falla no gasta presupuesto (enmienda a HD7) y `repregunta()` elige
+  el texto por `gastadas`, que no avanzaba.
+
+#### Lo que sí es del extractor, medido contra modelos reales
+
+La frase se ejercitó por el camino de producción (`ClienteLLM` + `extraer`),
+2026-08-10:
+
+| transcripción | `gemini-3.5-flash-lite` | `llama3.2:3b` (perfil C) | verdad |
+|---|---|---|---|
+| «Al 5 nada más.» | **5** (cita «Al 5») | **0** (cita «al 5 nada más») | 5 |
+| «Al cinco nada más.» | **5** | **10** | 5 |
+| «Cero.» | 0 | 0 | 0 |
+| «dices 0» | 0 | 0 | *(eco)* |
+| «Me siento caliente.» | `null` ✔ | **37,5 inventado** | `null` |
+
+- `[HECHO]` **La ruta principal extrae «Al 5 nada más» correctamente.** El
+  defecto de esta llamada no habría existido sin el 429.
+- `[HECHO]` **El perfil C sí falla, y con el modo peor de todos:** un número
+  equivocado con una cita que pasa la validación, porque cita la frase entera en
+  vez del fragmento del número. Es la generalización del límite que
+  `docs/prueba_inyeccion.md` §3.1 documentó para el STT: **la cita valida la
+  procedencia del TEXTO, no la del NÚMERO.** No estaba documentado y ahora lo
+  está.
+- `[HECHO]` **`models/gemini-3.6-flash` no se pudo medir**: seguía en 429 todo el
+  día. La ruta principal se midió con la alternativa 2 de la tabla de
+  `DECLARACION_MODELO.md` §5.
+- `[HECHO]` **Cinco tests nuevos** en `tests/test_extraccion.py` y
+  `tests/test_plantillas.py` con las transcripciones **literales**, incluido uno
+  que fija el **límite conocido** (`test_LIMITE_CONOCIDO_…`) para que endurecer la
+  validación no pase sin leer la medición de abajo.
+
+#### La regla candidata que se evaluó y se DESCARTÓ
+
+«Exigir que la cita contenga el número emitido» habría cazado el `0` con cita «al
+5 nada más». Se midió sobre 15 transcripciones —las de esta llamada, las cuatro
+de F3.6 y respuestas naturales de dolor y fiebre—:
+
+| | errores que caza | extracciones **buenas** que destruye |
+|---|---|---|
+| `gemini-3.5-flash-lite` (ruta principal) | **0** | **4** |
+| `llama3.2:3b` (fallback) | 4 | 3 |
+
+- `[HECHO]` **Sobre la ruta que se entrega la regla es pérdida pura.** Destruye
+  «No me duele nada» → 0, «Ningún dolor» → 0 y las dos temperaturas decimales
+  («treinta y ocho y medio» → 38,5, cuya cita no contiene «38.5»). Convertir «no
+  me duele nada» en AUSENTE alimenta **exactamente** el bucle de repreguntas que
+  causó el daño de esta llamada.
+- `[DESCARTADA]` No se implementa. La decisión queda fijada por un test para que
+  quien la reintente encuentre primero estos números.
+
+#### La repregunta de dolor: sí, y ya está cambiado
+
+- `[HECHO]` **`REPREGUNTAS_INSISTENCIA["dolor_nrs"]` deja de nombrar los extremos
+  de la escala.** Antes: «Sobre el dolor: deme solo un número **de cero a
+  diez**.» Ahora: «Sobre el dolor, ¿qué número me dice?».
+- `[HECHO]` **La escala sigue definida en la PRIMERA pregunta**, que es donde la
+  NRS necesita sus anclas y donde la paciente la oyó — y donde contestó bien.
+  La insistencia solo pide el número que ya se explicó.
+- `[HECHO]` **La defensa no cabía en el validador.** «dices 0» se extrae como `0`
+  **en los dos modelos medidos**, con cita literal y valor en dominio: el
+  extractor no puede distinguir un eco de una respuesta. Solo se puede evitar no
+  poniéndole números en la boca al paciente.
+- `[ESPECULACIÓN]` **La evidencia del eco es una paciente y una llamada.** El
+  cambio es barato y la dirección del error que evita es la grave, pero nadie ha
+  medido que la frase nueva se entienda mejor. Si en las próximas llamadas la
+  insistencia de dolor obtiene menos respuestas usables, esto es lo primero que
+  hay que revisar.
+
+### Lo verificado, y con qué
+
+| Criterio | Resultado |
+|---|---|
+| `python3 -m pytest tests/ -q` | **371 pasan, 1 skip** (366 antes; 5 tests nuevos) |
+| `sh scripts/sin_rutas_absolutas.sh` | **0**, sin avisos |
+| Causa del `dolor_nrs = 0` | `turnos.jsonl` de la llamada: `resultado: error`, tokens `null`, 293/308 ms · `app.log`: `HTTP 429 · You exceeded your current quota` |
+| «Al 5 nada más» por el camino real | `gemini-3.5-flash-lite` → **5**, cita «Al 5» · `llama3.2:3b` → **0**, cita «al 5 nada más» |
+| Coste de la regla descartada | 15 transcripciones, dos modelos: 0 errores cazados y 4 extracciones buenas destruidas en la ruta principal |
+
+### Deuda que este cambio deja abierta
+
+- `[PENDIENTE]` **La segunda corrida de cronometraje, con `docker image rm`
+  previo.** Hasta entonces §9.1 sigue sin números.
+- `[HECHO]` **El perfil C inventa valores numéricos que la cita no respalda**
+  («Me siento caliente» → 37,5; «Al cinco nada más» → 10). El prompt ya lo
+  prohíbe explícitamente en su regla 5 y el modelo la ignora. Es calidad del
+  fallback y queda declarado, pero **si alguien demostrara el sistema con el
+  perfil C, los números del registro clínico no son de fiar**.
+- `[ESPECULACIÓN]` **El eco de la pregunta no está resuelto, solo se le quitó una
+  ocasión.** La apertura y las repreguntas categóricas siguen enunciando su
+  dominio («normal, enrojecida, o con pus»), que es información necesaria y a la
+  vez un guion que un paciente confundido puede repetir. No se ha medido si eso
+  ocurre.

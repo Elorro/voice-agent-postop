@@ -517,3 +517,93 @@ def test_un_numero_desnudo_sin_cita_en_la_transcripcion_sigue_cayendo() -> None:
     )
     assert extraccion.senales["dolor_nrs"] is None
     assert extraccion.todo_ausente
+
+
+# --------------------------------------------------------------------------- #
+# «Al 5 nada más»: el número dentro de una frase corta con muletilla
+# --------------------------------------------------------------------------- #
+# Literal de la llamada 41d8feedea93 (2026-08-10, usuario no técnico, cierre
+# VERDE por S2). El dolor real era 5 y en el registro quedó 0.
+#
+# En esa llamada NO fue el extractor: `extraccion.resultado` fue **error** con
+# `tokens_in`/`tokens_out` en `None` y 293 ms —el modelo nunca vio la frase—,
+# y `app.log` lo confirma con `HTTP 429 · You exceeded your current quota`.
+# Es la misma firma de F3.6, no un modo de fallo nuevo.
+#
+# Pero al medirlo contra modelos reales apareció algo que sí es del extractor y
+# que no estaba documentado: `llama3.2:3b` (perfil C) devuelve **0** para esta
+# frase, con la cita «al 5 nada más», que pasa la validación porque el texto SÍ
+# está en la transcripción. `models/gemini-3.5-flash-lite` devuelve 5 con la cita
+# «Al 5». Los dos casos quedan fijados: el bueno como contrato, el malo como
+# límite conocido.
+def test_dolor_dicho_dentro_de_una_frase_corta() -> None:
+    """«Al 5 nada más.» -> 5. Es lo que hace el modelo de la ruta principal."""
+    extraccion = extraer(
+        responder(json.dumps({"dolor_nrs": {"valor": 5, "cita": "Al 5"}})),
+        CONTRATO,
+        "Al 5 nada más.",
+        "dolor_nrs",
+        timeout_ms=1000,
+    )
+    assert extraccion.resultado == OK
+    assert extraccion.senales["dolor_nrs"] == 5
+    assert extraccion.evidencias["dolor_nrs"] == "Al 5"
+
+
+def test_dolor_en_letras_dentro_de_una_frase_corta() -> None:
+    """La misma frase con el número escrito: «Al cinco nada más.» -> 5."""
+    extraccion = extraer(
+        responder(json.dumps({"dolor_nrs": {"valor": 5, "cita": "Al cinco"}})),
+        CONTRATO,
+        "Al cinco nada más.",
+        "dolor_nrs",
+        timeout_ms=1000,
+    )
+    assert extraccion.senales["dolor_nrs"] == 5
+
+
+def test_LIMITE_CONOCIDO_un_numero_equivocado_con_cita_amplia_pasa() -> None:
+    """**Este test fija un defecto, no una garantía.** Léase entero.
+
+    Si el modelo emite un valor equivocado y cita la frase ENTERA en vez del
+    fragmento del número, la validación por cita lo acepta: la cita está
+    literalmente en la transcripción. Medido con `llama3.2:3b` el 2026-08-10
+    sobre esta misma frase, que devuelve `0` con la cita «al 5 nada más».
+
+    Se fija para que el día que alguien endurezca la validación este test falle y
+    obligue a leer la medición que hay detrás: exigir que la cita CONTENGA el
+    número se evaluó el 2026-08-10 y **se descartó**, porque sobre la ruta
+    principal no cazaba ningún error y destruía cuatro extracciones legítimas
+    —«No me duele nada» → 0 y «treinta y ocho y medio» → 38.5 entre ellas—.
+    Los números están en docs/bitacora.md F3.10.
+    """
+    extraccion = extraer(
+        responder(json.dumps({"dolor_nrs": {"valor": 0, "cita": "al 5 nada más"}})),
+        CONTRATO,
+        "Al 5 nada más.",
+        "dolor_nrs",
+        timeout_ms=1000,
+    )
+    assert extraccion.senales["dolor_nrs"] == 0, (
+        "si esto cambia, la validación se endureció: lea F3.10 antes de dar el "
+        "cambio por bueno, porque el coste medido era peor que el defecto"
+    )
+
+
+def test_el_eco_de_la_pregunta_se_extrae_como_valor() -> None:
+    """«dices 0» -> 0, y no hay validación que pueda evitarlo.
+
+    El paciente estaba repitiendo el número que el agente acababa de decir. El
+    extractor no puede distinguir eso de una respuesta: la cita es literal y el
+    valor está en dominio. **La defensa contra el eco no está en el extractor,
+    está en no ponerle números en la boca al paciente** — por eso la insistencia
+    de `dolor_nrs` dejó de decir «de cero a diez» (F3.10).
+    """
+    extraccion = extraer(
+        responder(json.dumps({"dolor_nrs": {"valor": 0, "cita": "0"}})),
+        CONTRATO,
+        "dices 0",
+        "dolor_nrs",
+        timeout_ms=1000,
+    )
+    assert extraccion.senales["dolor_nrs"] == 0

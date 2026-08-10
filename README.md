@@ -100,7 +100,7 @@ git clone https://github.com/Elorro/voice-agent-postop.git
 cd voice-agent-postop
 cp .env.example .env
 nano .env                       # pegue LLM_API_KEY y STT_API_KEY, guarde (Ctrl+O, Enter, Ctrl+X)
-sudo docker compose pull
+sudo docker compose pull       # SI FALLA, NO SIGA: vea el recuadro de abajo
 sudo docker compose up -d
 xdg-open http://localhost:8080/salud
 ```
@@ -126,7 +126,7 @@ git clone https://github.com/Elorro/voice-agent-postop.git
 cd voice-agent-postop
 cp .env.example .env
 open -e .env                    # pegue LLM_API_KEY y STT_API_KEY, guarde (Cmd+S)
-docker compose pull
+docker compose pull             # SI FALLA, NO SIGA: vea el recuadro de abajo
 docker compose up -d
 open http://localhost:8080/salud
 ```
@@ -141,15 +141,33 @@ git clone https://github.com/Elorro/voice-agent-postop.git
 cd voice-agent-postop
 Copy-Item .env.example .env
 notepad .env                    # pegue LLM_API_KEY y STT_API_KEY, guarde (Ctrl+S), cierre
-docker compose pull
+docker compose pull             # SI FALLA, NO SIGA: vea el recuadro de abajo
 docker compose up -d
 Start-Process http://localhost:8080/salud
 ```
 
+> ### ⛔ Si `docker compose pull` falla, NO ejecute `up -d`
+>
+> **Reintente el `pull`, o pase a la ruta de construcción de aquí abajo.** No
+> siga adelante hasta que el `pull` termine sin error.
+>
+> El motivo es que `up -d` **no vuelve a intentar la descarga**: usa lo que haya
+> en el caché local del daemon. En una máquina donde la imagen ya se descargó
+> alguna vez, el contenedor arranca en segundos y **parece** que todo fue bien —
+> el error del `pull` queda tres líneas más arriba y nadie vuelve a mirarlo. En
+> una máquina limpia, que es la suya, no hay caché: `up -d` falla o arranca algo
+> que no es lo que se quería instalar.
+>
+> Esto no es hipotético: en la corrida de cronometraje del **2026-08-10** el
+> `pull` falló con `lookup ghcr.io: no such host` y el operador continuó. Arrancó
+> en 10 s **porque era la máquina de desarrollo y la imagen ya estaba en caché**.
+> Esa corrida no probó el camino que va a recorrer usted.
+
 ### Alternativa: construir en vez de descargar
 
-Solo si `docker compose pull` falla (ghcr.io bloqueado, red corporativa). Tarda
-bastante más porque baja los modelos y compila la imagen en su máquina:
+Si `docker compose pull` falla —ghcr.io bloqueado, red corporativa, o el DNS
+falló y el reintento tampoco funcionó—. Tarda bastante más porque baja los
+modelos y compila la imagen en su máquina, pero **no depende de ghcr.io**:
 
 ```bash
 sudo docker compose build      # Linux;  en macOS/Windows: docker compose build
@@ -841,6 +859,14 @@ su cuenta. `tests/test_import_unico_politica.py` falla si aparece un segundo, y
 | Tiempo de arranque hasta primera respuesta | PENDIENTE DE MEDICIÓN | |
 | Nº de dudas del operador no resueltas por el README | PENDIENTE DE MEDICIÓN | |
 
+> **La primera corrida (2026-08-10) se descartó y no aportó ninguna celda.** El
+> `docker compose pull` falló por DNS, el operador continuó, y `up -d` arrancó en
+> 10 s **desde el caché local del daemon** porque se corrió en la máquina de
+> desarrollo. Eso mide un arranque desde caché, no una instalación: en la máquina
+> del evaluador no hay caché. La segunda corrida se hará con `docker image rm`
+> previo. Detalle en `docs/bitacora.md` **F3.10**, y el aviso que faltaba en el
+> procedimiento está ahora en §2.
+
 ### 9.2 Latencia del turno de voz
 
 **Fecha: 2026-08-10. Máquina: Fedora Linux (x86_64), CPU, sin GPU.**
@@ -1032,6 +1058,7 @@ día (§7).
 |---|---|---|
 | `docker: command not found` | Docker no instalado o Desktop apagado | Instálelo / ábralo y espere a que la ballena deje de moverse |
 | `docker compose` → `is not a docker command` | Falta el plugin de Compose v2 | Linux: `sudo apt install docker-compose-plugin`. macOS/Windows: actualice Docker Desktop |
+| `pull` → `lookup ghcr.io: no such host` · `failed to resolve reference` · `dial tcp: i/o timeout` | **Es DNS**, no la imagen ni sus credenciales: el daemon no pudo resolver `ghcr.io`. Suele ser intermitente | **Reintente `docker compose pull`.** Si vuelve a fallar, use `sudo docker compose build` (§2). **No siga a `up -d` con el `pull` fallido**: arrancaría desde el caché local, o no arrancaría |
 | `permission denied … docker daemon socket` | Linux sin `sudo` | Use `sudo` en **todos** los comandos |
 | `port is already allocated` | Algo ocupa el 8080 | Ponga `PUERTO=8081` en `.env`, `up -d` otra vez, y abra `localhost:<PUERTO>` (8081 en este ejemplo), no 8080 |
 | `/salud` no abre | El contenedor no arrancó | `docker compose ps` y `docker compose logs` |
