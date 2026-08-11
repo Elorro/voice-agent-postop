@@ -2662,3 +2662,37 @@ añadió la semana pasada. Si los dos números difieren, algo no llega al clon.
   archivo igual.** El límite duro de GitHub son 100 MiB por archivo y el índice
   crece con el corpus. Si el corpus se amplía, la semilla habrá que partirla o
   dejar de versionarla, y eso cambia la ruta de arranque del jurado.
+
+## F3.13 — Perfil local: 3b no cabe en esta máquina, 1b cabe pero degrada la extracción
+
+**Máquina: Fedora Linux, i3-1115G4, 7,5 GB RAM, CPU sin GPU.** Corrida del
+2026-08-11 comparando `llama3.2:3b` y `llama3.2:1b` en el perfil C, agente y
+navegador headless corriendo a la vez.
+
+- `[HECHO]` **La latencia y el resultado por turno están en
+  `datos/logs/turnos.jsonl`, auditables.** Filtrando por fecha 2026-08-11 y
+  modelo: `1b` corrió **6/6 turnos con `ok`**, servidor_total P50 **7 142,8 ms**
+  / P95 **17 632,0 ms** (n=6). `3b` solo dejó **2** turnos ese día antes de
+  descartarlo: turno 1 con extracción en **20 023,1 ms** contra el tope de
+  20 000 ms → `timeout`; turno 2 en 6 463,3 ms → `ok`. Detalle completo, con el
+  comando de recálculo, en README §9.2.2.
+- `[HECHO]` **`1b` degrada la extracción, y no es hipotético.** Llamada
+  `f84845aa8e26`, turno 2: el paciente dijo «Me duele bastante, yo diría que un
+  7 de 10» y el extractor devolvió `resultado: ok` **sin ninguna cita**
+  (`dolor_nrs` se quedó en `null`). La llamada completa cerró en el turno 6 con
+  `accion: CLASIFICAR`, `clase: ROJO`, `criterio: AGOTAMIENTO` — rojo por
+  presupuesto de preguntas agotado, no por un criterio clínico limpio.
+- `[HECHO — no persistido]` **El swap se observó con `free -h` durante la
+  corrida, y no quedó en ningún log del repositorio** (`turnos.jsonl` no mide
+  memoria del sistema): con `3b` corriendo el agente y el navegador headless a
+  la vez, el swap subió a **3,4 GiB** (+1,9 GiB sobre un baseline de 1,5 GiB) en
+  el momento de la inferencia; con `1b` el swap quedó en **~905 MiB**, por
+  debajo del baseline — no swapeó. Se registra aquí como observación de la
+  corrida, no como métrica recalculable: quien quiera reproducirla necesita
+  repetir la corrida con `free -h` abierto al lado, el log no basta.
+
+**Lectura para el README (§4.5 y §9.2.2):** en una máquina de ~8 GB sin GPU,
+`3b` da mejor calidad de extracción pero no cabe sin swap; `1b` cabe pero
+extrae peor. Con GPU dedicada o ≥16 GB de RAM, `3b` corre sin swap y es la
+opción recomendada. La elección de modelo del perfil C depende del hardware
+del evaluador.

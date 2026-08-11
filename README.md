@@ -400,32 +400,9 @@ Si una clave no funciona o se agotó su cuota:
   Péguela en `STT_API_KEY=`, sin comillas y sin espacios alrededor del `=`. El
   plan gratuito basta para la demostración.
 - **O cambie de perfil.** El **B** es Llama 3.1 70B en otro proveedor (necesita
-  saldo); el **C** es el **fallback local**, que no necesita clave ni internet:
-
-  ```bash
-  docker compose --profile local up -d
-  docker compose --profile local exec llm-local ollama pull llama3.2:3b
-  ```
-
-  y en `.env`: `LLM_BASE_URL=http://llm-local:11434/v1`, `LLM_MODELO=llama3.2:3b`,
-  `LLM_PERFIL=local`, `LLM_API_KEY=` vacía, **`EXTRACTOR_TIMEOUT_MS=20000`,
-  `REDACTOR_TIMEOUT_MS=8000`, `RAG_TIMEOUT_MS=30000` y `LLM_RAZONAMIENTO=`
-  vacía** — las cuatro no son opcionales. Los tres timeouts, porque con los
-  valores del perfil A un modelo local cae en timeout en todos los turnos.
-  `LLM_RAZONAMIENTO` **vacía**, porque el perfil A necesita
-  `reasoning_effort=low` y Ollama responde a eso
-  `HTTP 400 "llama3.2:3b" does not support thinking`: con la variable vacía el
-  campo no se envía. Las líneas exactas están comentadas en `.env.example`,
-  dentro del bloque del perfil, listas para descomentar.
-
-  > **No deje `LLM_RAZONAMIENTO` repetida en el archivo.** Si aparece dos veces
-  > **gana la última**, así que un `LLM_RAZONAMIENTO=low` más abajo pisa el
-  > `LLM_RAZONAMIENTO=` del bloque de perfil y el modelo local vuelve a fallar.
-  > Por eso la variable vive **dentro** de cada bloque y no en una sección
-  > aparte.
-
-  **El perfil C no tiene cuota ni red.** Es la única ruta que no puede quedarse
-  sin peticiones a mitad de una demostración.
+  saldo); el **C** es el **fallback local**, que no necesita clave ni internet
+  y no tiene cuota — no puede quedarse sin peticiones a mitad de una
+  demostración. Procedimiento completo, paso a paso: **§4.5**.
 
 Reinicie con `docker compose up -d` (con `sudo` en Linux) después de tocar `.env`.
 
@@ -440,6 +417,86 @@ Reinicie con `docker compose up -d` (con `sudo` en Linux) después de tocar `.en
 | `no se pudo verificar ahora: …` | La comprobación no llegó a completarse (timeout, `429` o `5xx`). **No dice nada sobre su configuración: recargue una vez** (§3) |
 | `el proveedor no es alcanzable: … 400 Bad Request …` **en el perfil A** | Casi siempre es **la clave**, no la red: Google responde 400 —no 401— a una clave inválida o al marcador sin sustituir. Revise `LLM_API_KEY` antes de revisar la conexión |
 | `ausente` | El archivo `.env` no existe o la línea quedó vacía |
+
+---
+
+### 4.5 Modo local (perfil C): cumplir G3 sin clave ni internet
+
+El **perfil C** corre el modelo de lenguaje en su propia máquina con Ollama, sin
+clave, sin cuota y sin internet. Es la ruta que **verifica la compuerta G3** —el
+modelo `llama3.2` es la celda «Local, CPU» de la lista permitida— sin depender de
+ninguna clave de proveedor. **No es la ruta rápida**: en CPU la inferencia es
+lenta, y esta sección declara los números medidos para que no haya sorpresa. Es
+un fallback de *cumplimiento*, no de *rendimiento*. La ruta de producción es el
+perfil A (§2).
+
+> **Qué modelo usar, según su máquina.**
+> - **Con GPU dedicada o ≥16 GB de RAM:** use `llama3.2:3b`. Mejor extracción,
+>   corre sin swap.
+> - **En una máquina de ~8 GB sin GPU (como la de desarrollo):** use
+>   `llama3.2:1b`. `3b` entra en swap (medido: +1,9 GiB en inferencia, con
+>   timeout de extracción) y se degrada; `1b` cabe sin swap. El precio de `1b` es
+>   una extracción más débil —puede no captar un dato que un modelo mayor sí
+>   capta— y por eso es fallback de cumplimiento, no de calidad clínica. Detalle
+>   medido en `docs/DECLARACION_MODELO.md`, §9.2.2 y `docs/bitacora.md`
+>   (entrada F3.13, 2026-08-11).
+
+**Paso 1 — Prepare el `.env` para el perfil C.** Parta de la plantilla
+(`cp .env.example .env`, §2) y cambie el bloque del LLM. Las líneas exactas —las
+cuatro últimas **no son opcionales**:
+
+```
+LLM_BASE_URL=http://llm-local:11434/v1
+LLM_MODELO=llama3.2:1b        # o llama3.2:3b si su máquina tiene GPU/≥16GB
+LLM_PERFIL=local
+LLM_API_KEY=
+EXTRACTOR_TIMEOUT_MS=20000
+REDACTOR_TIMEOUT_MS=8000
+RAG_TIMEOUT_MS=30000
+LLM_RAZONAMIENTO=
+```
+
+Las cuatro últimas importan porque un modelo local en CPU tarda: con los
+timeouts del perfil A (2500/4000 ms) el extractor cae en timeout en *todos* los
+turnos. `LLM_RAZONAMIENTO` va **vacía** porque Ollama responde `HTTP 400
+"…" does not support thinking` ante `reasoning_effort`, que es justo lo que
+necesita el perfil A. **No la deje repetida en el archivo**: si aparece dos
+veces, gana la última asignación, y una `LLM_RAZONAMIENTO=low` más abajo pisa
+la vacía y el modelo local vuelve a fallar.
+
+El STT sigue en Groq —no lo toca G3—: conserve sus líneas `STT_*` con su clave
+`gsk_` (§4). Si tampoco quiere depender de Groq para el STT, es una dependencia
+aparte, del STT, no del LLM; G3 es sobre el LLM.
+
+**Paso 2 — Levante Ollama y descargue el modelo:**
+
+```bash
+sudo docker compose --profile local up -d
+sudo docker compose --profile local exec llm-local ollama pull llama3.2:1b
+sudo docker compose up -d          # reinicia el agente para tomar el .env nuevo
+```
+
+(macOS/Windows: sin `sudo`, igual que en §2.)
+
+**Paso 3 — Verifique.** `/salud` hace una inferencia real de prueba del modelo
+local al arrancar (no solo comprueba que responde, §3), así que un **LISTO**
+aquí significa que el modelo de verdad infiere:
+
+```bash
+xdg-open http://localhost:8080/salud    # el componente LLM debe decir LISTO
+```
+
+Si `/salud` dice **NO LISTO** citando el modelo, el mensaje trae el
+identificador y el motivo exacto (típico: modelo no descargado, o
+`LLM_RAZONAMIENTO` con un valor que el modelo local rechaza — tabla de §4).
+
+**Qué esperar de la latencia.** En la máquina de desarrollo (i3, 7,5 GB, CPU),
+`llama3.2:1b` da un P50 de **7 142,8 ms** y un P95 de **17 632,0 ms** por turno
+de servidor (medido, README §9.2.2, n=6). Es varias veces el presupuesto de la
+ruta de producción (§9.2.1, perfil A por navegador: P50 4 827 ms). Esta
+diferencia es el precio de correr el modelo en CPU sin depender de ningún
+proveedor, y es esperada: el perfil C existe para demostrar cumplimiento e
+independencia de proveedor, no para competir en latencia.
 
 ---
 
@@ -708,12 +765,8 @@ Son **servicios externos**, y por eso son las dos únicas cosas que piden clave:
 Los dos hablan el mismo protocolo OpenAI-compatible, así que son **una sola
 integración con dos configuraciones**, no dos clientes. Esa es también la razón
 de que el **fallback local** —Llama 3.2 sobre Ollama, celda «Local, CPU» de la
-lista permitida— no sea código aparte: solo cambia `LLM_BASE_URL`.
-
-```bash
-docker compose --profile local up -d
-docker compose --profile local exec llm-local ollama pull llama3.2:3b
-```
+lista permitida— no sea código aparte: solo cambia `LLM_BASE_URL`. Cómo
+levantarlo paso a paso: **§4.5**.
 
 El servicio `llm-local` de `compose.yaml` lleva `profiles: ["local"]`, así que
 `docker compose up -d` a secas **no lo arranca** y la ruta principal no paga
@@ -1093,6 +1146,66 @@ Lo que sí queda demostrado con estos mismos números: **el piso funciona**. Con
 proveedor de LLM caído, el turno completo tardó **371 ms** (STT 2,1 · extracción
 0,3 · política 0,04 · redacción 0,2 · TTS 368) y el agente siguió preguntando
 desde plantilla.
+
+#### 9.2.2 Perfil local, comparación 3b vs 1b en esta máquina (2026-08-11)
+
+**Máquina: Fedora Linux, i3-1115G4, 7,5 GB RAM, CPU sin GPU.** Fuente:
+`datos/logs/turnos.jsonl`, turnos de fecha 2026-08-11, filtrados por modelo.
+Banco de pruebas headless (`cliente_headless`), así que el número es
+`latencia_ms.servidor_total`, **no comparable** con el P50 por navegador de
+§9.2.1: le falta la subida del audio, la decodificación y el arranque de la
+reproducción.
+
+| Modelo | n | P50 servidor | P95 servidor | Extracción | Resultado |
+|---|---|---|---|---|---|
+| `llama3.2:1b` | 6 | **7 142,8 ms** | **17 632,0 ms** | 1 687–11 136 ms | 6/6 `ok` |
+| `llama3.2:3b` | 2 | — (n insuf.) | — | turno 1 **20 023 ms → timeout**; turno 2 6 463 ms | 1/2 `ok` |
+
+Serie cruda de `1b` (servidor_total, ms): 4 088,5 · 4 302,1 · 7 142,8 · 8 367,3 ·
+9 161,4 · 17 632,0.
+
+**Lo que estos números deciden, y es más importante que la latencia:** en esta
+máquina (~8 GB, sin GPU) `3b` **no cabe** —en el turno 1 la extracción agotó el
+tope de 20 000 ms y devolvió `timeout` por contención de memoria— y `1b` sí cabe
+pero **extrae peor**: en la misma corrida (llamada `f84845aa8e26`, turno 2), ante
+«Me duele bastante, yo diría que un 7 de 10» el extractor devolvió `resultado:
+ok` pero **sin citas** (`dolor_nrs` se quedó en `null`), y la llamada cerró
+**ROJO por `AGOTAMIENTO`** en el turno 6 en vez de por un criterio clínico
+limpio. La elección de modelo del perfil C depende del hardware: `3b` con GPU o
+≥16 GB; `1b` en CPU modesta, asumiendo la extracción más débil. Es un fallback de
+*cumplimiento* (G3), no de *rendimiento*.
+
+**Auditable en la máquina donde se corrió, no desde un clon:** `datos/` está en
+`.gitignore`, así que `turnos.jsonl` no viaja. Recálculo sobre el log:
+
+```bash
+python3 - datos/logs/turnos.jsonl <<'PY'
+import json, sys
+for m in ("llama3.2:1b", "llama3.2:3b"):
+    xs = []
+    for l in open(sys.argv[1]):
+        d = json.loads(l) if l.strip() else {}
+        if d.get("tipo") != "turno":
+            continue
+        if (d.get("ts") or "")[:10] != "2026-08-11":
+            continue
+        modelos = set(i.get("modelo") for i in (d.get("llm") or []))
+        if modelos != {m}:
+            continue
+        st = (d.get("latencia_ms") or {}).get("servidor_total")
+        if st is not None:
+            xs.append(st)
+    xs.sort()
+    if xs:
+        p = lambda q: xs[min(len(xs) - 1, round(q * (len(xs) - 1)))]
+        print(f"{m}: n={len(xs)} P50={p(.5):.1f} P95={p(.95):.1f}")
+PY
+```
+
+> **Nota sobre memoria (no está en este log).** Durante la misma corrida se
+> observó el uso de swap con `free -h`, no capturado por `turnos.jsonl` porque el
+> registro de turnos no mide memoria del sistema. El detalle, con su propia
+> etiqueta de "no persistido", está en `docs/bitacora.md`, entrada 2026-08-11.
 
 ### 9.3 Calidad clínica
 
