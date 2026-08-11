@@ -318,7 +318,7 @@ def cargar_config() -> Config:
         rag_k=_entero("RAG_K", 5),
         # 0.59 sobre el score FUNDIDO (α = 0,5). Rechaza las 8 consultas ajenas
         # medidas —máximo 0,536— con **0,054 de margen**, y acepta el documento
-        # subido de la compuerta G5 (0,6444).
+        # subido de la compuerta G5 (0,6499).
         #
         # Sustituye a un 0,65 sobre el score denso puro que se entregó primero y
         # era peor por dos razones, en este orden:
@@ -343,7 +343,7 @@ def cargar_config() -> Config:
         #
         # 0,5 y no 1,0: es lo que hace pasar G5. En el caso medido, la fusión
         # mueve el fragmento correcto del puesto 2 al 1 y le abre el doble de
-        # margen (0,6444 contra 0,3255). Lo que se paga está declarado en
+        # margen (0,6499 contra 0,3255). Lo que se paga está declarado en
         # docs/calibracion_rag.md §4.3: con α < 1 el IDF interno del corpus
         # degrada el orden de algunas consultas del propio corpus.
         rag_pool=_entero("RAG_POOL", 60),

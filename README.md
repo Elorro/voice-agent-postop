@@ -895,9 +895,15 @@ su cuenta. `tests/test_import_unico_politica.py` falla si aparece un segundo, y
 
 ## 9. Métricas obligatorias
 
-> **PENDIENTE DE MEDICIÓN.** Los encabezados están puestos; los números **no**
-> se rellenan con estimaciones. Cada celda se llena con una corrida medida, y al
-> lado va el comando o el procedimiento del que salió.
+> **Estado de medición, por subsección.** Cada celda trae al lado el comando o
+> procedimiento del que salió; ningún número es estimación. **Medido:** §9.2 y
+> §9.2.1 (latencia por navegador, 2026-08-10), §9.4 (RAG, 2026-08-10), §9.5
+> (empaquetado, 2026-08-09) y la fila de resistencia a inyección de §9.3
+> (2026-08-10). **Pendiente de medición:** §9.1 (cronometraje G2 de extremo a
+> extremo — la única corrida hasta hoy midió un arranque desde caché y se
+> descartó; ver `docs/bitacora.md` F3.10) y las cuatro primeras filas de §9.3
+> (recall de banderas, falsos negativos críticos, tasa de escalamiento y turnos
+> por conversación end-to-end bajo capa 2).
 
 ### 9.1 Levantamiento (G2)
 
@@ -918,21 +924,25 @@ su cuenta. `tests/test_import_unico_politica.py` falla si aparece un segundo, y
 
 ### 9.2 Latencia del turno de voz
 
-**Fecha: 2026-08-10. Máquina: Fedora Linux (x86_64), CPU, sin GPU.**
-Configuración medida: **perfil local** (`llama3.2:3b` en Ollama, CPU) y STT
-sustituido por el banco de pruebas (`scripts/stt_de_prueba.py`), porque este
-repositorio no trae clave del proveedor. Los números de abajo describen **esa**
-configuración y ninguna otra.
+**Fecha: 2026-08-10. Máquina: Fedora Linux (x86_64), CPU, sin GPU.** La tabla
+mezcla **dos configuraciones medidas**, y cada fila declara la suya. La fila
+autoritativa de la rúbrica —**extremo a extremo por navegador**— es del
+**perfil A** (`models/gemini-3.6-flash` y `-3.5-flash-lite`) con **STT real en
+Groq**; su procedimiento completo está en §9.2.1. Las filas de **desglose por
+span** (servidor, STT, extractor, redactor, TTS, política) son del **perfil
+local** (`llama3.2:3b` en Ollama, CPU) con STT sustituido por el banco de
+pruebas (`scripts/stt_de_prueba.py`), porque este repositorio no trae clave del
+proveedor. Cada fila dice a cuál de las dos pertenece.
 
 | Métrica | Valor | Cómo se midió |
 |---|---|---|
-| **Extremo a extremo, medida por el navegador (P50/P95)** | **4 827 / 8 426 ms** (n = 16) | **Medido. Está en §9.2.1**, con el procedimiento, el filtro y lo que el número no cubre |
-| Total del turno en el servidor (p50, llamada completa con 3b) | **8 664 ms** | `GET /metricas`, campo `latencia_ms.servidor_total`, sobre la corrida de 4 turnos |
-| Latencia de STT | 2–31 ms | `latencia_ms.spans.stt`. **Es el banco de pruebas local, no el proveedor**: mide el cliente HTTP y el multipart, no la transcripción real |
-| Latencia del LLM — extractor | 6 849 / 10 659 / 7 597 / 7 474 ms | `latencia_ms.spans.extraccion`, un valor por turno. **Domina el turno entero** |
-| Latencia del LLM — redactor | 600–610 ms, siempre timeout | `latencia_ms.spans.redaccion`. Es el tope duro haciendo su trabajo: cae a plantilla y el turno no se cae |
-| Síntesis de voz (Piper, local) | 368–2 024 ms (p50 761) | `latencia_ms.spans.tts`. En el build: 2,65 s de audio en **264 ms** |
-| Decisión de la política | 0,04–2,3 ms (p50 0,1) | `latencia_ms.spans.politica`. stdlib pura, sin I/O |
+| **Extremo a extremo, medida por el navegador (P50/P95) (perfil A, Groq)** | **4 827 / 8 426 ms** (n = 16) | **Medido. Está en §9.2.1**, con el procedimiento, el filtro y lo que el número no cubre |
+| Total del turno en el servidor (p50, llamada completa) (perfil local 3b) | **8 664 ms** | `GET /metricas`, campo `latencia_ms.servidor_total`, sobre la corrida de 4 turnos |
+| Latencia de STT (perfil local 3b) | 2–31 ms | `latencia_ms.spans.stt`. **Es el banco de pruebas local, no el proveedor**: mide el cliente HTTP y el multipart, no la transcripción real |
+| Latencia del LLM — extractor (perfil local 3b) | 6 849 / 10 659 / 7 597 / 7 474 ms | `latencia_ms.spans.extraccion`, un valor por turno. **Domina el turno entero** |
+| Latencia del LLM — redactor (perfil local 3b) | 600–610 ms, siempre timeout | `latencia_ms.spans.redaccion`. Es el tope duro haciendo su trabajo: cae a plantilla y el turno no se cae |
+| Síntesis de voz — Piper (perfil local 3b) | 368–2 024 ms (p50 761) | `latencia_ms.spans.tts`. En el build: 2,65 s de audio en **264 ms** |
+| Decisión de la política (perfil local 3b) | 0,04–2,3 ms (p50 0,1) | `latencia_ms.spans.politica`. stdlib pura, sin I/O |
 
 **Lectura honesta de estos números:** el turno lo domina el extractor, y el
 extractor aquí es un modelo de 3B corriendo en CPU. Es el precio declarado del
@@ -1086,13 +1096,29 @@ desde plantilla.
 
 ### 9.3 Calidad clínica
 
+**Política de decisión, medida sobre el dev set (160 casos, vector completo).**
+Fuente: `scripts/verificacion_hd1_salida.txt` (oráculo independiente) y
+`tests/test_dev_set.py` (equivalencia caso a caso con el módulo en ejecución).
+
 | Métrica | Valor | Cómo se midió |
 |---|---|---|
-| Recall de banderas rojas | PENDIENTE DE MEDICIÓN | |
-| Falsos negativos críticos | PENDIENTE DE MEDICIÓN | |
-| Tasa de escalamiento por nivel | PENDIENTE DE MEDICIÓN | |
-| Turnos por conversación | PENDIENTE DE MEDICIÓN | |
-| **Resistencia a inyección de prompt** (2026-08-10) | **4 de 4 ataques resistidos**: 0 cambiaron la clase, 0 cerraron la llamada, 0 filtraron el prompt | 2 llamadas por navegador con micrófono real. Registro, argumento estructural y **lo que la prueba NO cubre**: [`docs/prueba_inyeccion.md`](docs/prueba_inyeccion.md) |
+| Recall de banderas rojas (rojo real → ROJO) | **1.000 (12/12)** | `DATASET_DIR=./dataset python3 scripts/verificacion_hd1.py`, bloque V1 |
+| Falsos negativos críticos (C_FN, rojo→verde) | **0** | Ídem, V1 |
+| Rojo→amarillo (c₃) | **0** | Ídem, V1 |
+| Amarillo→verde (c₁) | **0** | Ídem, V1 |
+| Sobre-escalamiento verde→amarillo (c₂) | **11** (4 temprano, 7 tardío) | Ídem, V1. Precio conservador aceptado por matriz de costos |
+| Criterios de cierre (S1/S2/S3/forzado) | **12 / 93 / 36 / 19** | Ídem, V2 |
+| Resistencia a inyección de prompt (2026-08-10) | **4 de 4 resistidos**: 0 cambiaron clase, 0 cerraron llamada, 0 filtraron prompt | 2 llamadas por navegador. [`docs/prueba_inyeccion.md`](docs/prueba_inyeccion.md) |
+
+**Lo que estos números NO cubren, dicho antes de usarlos.** Miden la **política**
+con el vector clínico completo entregado: son el error de *regla*, no el de
+*extracción*. No miden el agente **end-to-end bajo capa 2**, donde la señal la
+extrae el LLM de un habla evasiva o incompleta y la incertidumbre pasa a ser *si*
+la política recibe la señal, no *qué* decide con ella. El `recall_rojo=1.000` es
+sobre n=12 rojos: el IC de Wilson a nivel paciente (n=6) es **[0.610, 1.000]**, y
+un error mueve el recall ~17 pt. Se reporta como límite estadístico, no como
+predicción de la nota. La medición end-to-end sobre capa 2 es la deuda abierta de
+la política.
 
 ### 9.4 Recuperación (RAG) — medido
 

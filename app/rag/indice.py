@@ -92,7 +92,7 @@ no es la única propiedad que hay que comprar. Con α = 1,0:
   del ruido de muestreo, así que la seguridad que compraba era nominal.
 
 Con α = 0,5 el mismo caso de G5 se ordena bien —el documento sube al puesto 1 con
-0,6444 y el ejercicio de rodilla cae a 0,3255— y el margen de rechazo contra las
+0,6499 y el ejercicio de rodilla cae a 0,3255— y el margen de rechazo contra las
 consultas ajenas pasa de 0,033 a **0,054**. Lo que se paga es que más consultas
 cubiertas del corpus caen por debajo del umbral y el agente declara su límite. Ese
 es el error que la rúbrica premia.
