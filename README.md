@@ -17,7 +17,7 @@ Los cuatro entregables del reto:
 > En el video, la primera parte explica como levantar el proyecto, y ahi se comprueba que el proyecto se puede levantar en menos de 15min.
 > Aunque justo por eso el video quedo de 23min.
 
-> Entregable extra en [`docs/informe_final.md`](docs/informe_final.md) queda el registro de todas las decisiones que se tomaron en este proyecto de principio a fin.
+> Entregable extra en [`docs/bitacora.md`](docs/bitacora.md) queda el registro de todas las decisiones que se tomaron en este proyecto de principio a fin.
 
 
 # Voice Agent Post-Op
