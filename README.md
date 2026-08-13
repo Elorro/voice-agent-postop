@@ -4,15 +4,13 @@ Los cuatro entregables del reto:
 
 | Entregable | Ver en GitHub (recomendado) | Copia en Drive |
 |---|---|---|
-| **Informe final** | [`docs/informe_final.md`](docs/informe_final.md) | [PDF en Drive](https://drive.google.com/file/d/12WEreSNBn8fanupDKANqZYgGmSo3iI1Z/view?usp=sharing) |
+| **Informe final** | [`docs/informe_final.md`](docs/informe_final.md) | [PDF en Drive](https://drive.google.com/file/d/1zntGetdwDe7EBeQsUxbkhUmMMLyvGIG8/view?usp=sharing) |
 | **Diagrama de arquitectura** | [`docs/arquitectura.md`](docs/arquitectura.md) | [PDF en Drive](https://drive.google.com/file/d/1ioKolr2v_mWJXxSMm4RtHVfd4JuGbBU7/view?usp=sharing) |
 | **Video (demo end-to-end)** | [Carpeta en Drive](https://drive.google.com/drive/folders/1JHNIPs9U3HUIsx0LxRhskYqmK35sDWRD?usp=sharing) | [Video en Drive](https://drive.google.com/file/d/1gNb__OcH8fZ4wjcE38KhpXCLEBS_L-P_/view?usp=sharing&t=1.129) |
 
 
 > Los documentos `.md` renderizan mejor en GitHub (incluido el diagrama Mermaid).
 > Las copias en PDF de Drive son idénticas en contenido, provistas para visualización fuera de GitHub.
-
-> Las API KEY solo estan en el PDF del informe que esta en Drive, estan en la seccion 12.2, no quedan en el informe_final.md de la repo.
 
 > En el video, la primera parte explica como levantar el proyecto, y ahi se comprueba que el proyecto se puede levantar en menos de 15min.
 > Aunque justo por eso el video quedo de 23min.
