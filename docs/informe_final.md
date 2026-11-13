@@ -1,5 +1,7 @@
 # Informe final — Agente de voz para seguimiento postoperatorio
 
+Nota 2026-11-09: las claves del entregable (§12.2) fueron revocadas y ya no funcionan. El camino vigente es crear una propia (README §4).
+
 **Tech Sphere Challenge 2026 · Source Meridian**
 Participante: Luis · Modalidad individual, senior
 Repositorio: <https://github.com/Elorro/voice-agent-postop>

@@ -829,6 +829,13 @@ DATASET_DIR=./dataset python3 -m pytest tests/ -q
 python3 -m pytest tests/ -q
 ```
 
+Medición del **2026-11-15**, en un venv limpio:
+
+| Comando | Resultado |
+|---|---|
+| `DATASET_DIR=./dataset python3 -m pytest tests/ -q` | **379 passed** |
+| `python3 -m pytest tests/ -q` (sin `DATASET_DIR`) | **371 passed, 1 skipped, 1 warning in 3.13s** |
+
 Cubre `politica/` (143 casos, incluido el dev set completo) y el turno: el
 extractor y sus degradaciones, las plantillas, el registro y las métricas, la
 orquestación con los tres servicios externos sustituidos por dobles, y la
