@@ -2696,3 +2696,9 @@ navegador headless corriendo a la vez.
 extrae peor. Con GPU dedicada o ≥16 GB de RAM, `3b` corre sin swap y es la
 opción recomendada. La elección de modelo del perfil C depende del hardware
 del evaluador.
+
+## 2026-11-09 · Revocación de la clave del informe
+
+- `[HECHO]` **La clave del informe fue revocada el 2026-11-09.** No debe
+  presentarse ni usarse como una credencial disponible. El camino es que cada
+  persona cree su propia clave; los enlaces para hacerlo están en README §4.
